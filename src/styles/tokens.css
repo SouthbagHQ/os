@@ -1,0 +1,64 @@
+/*
+ * Southbag design tokens.
+ *
+ * Every value here already exists in SouthbagHQ/website src/styles/global.css.
+ * Southbag OS extends the institution's design system; it does not start one.
+ *
+ * Deliberately absent: --sb-amber-*, --sb-red-*, --sb-orange-*. The system
+ * defines them. Nothing in this operating system is ever pending, denied or
+ * escalated, so the colours for those states never appear.
+ */
+
+:root {
+  --sb-bg: #050608;
+  --sb-panel: #0a0c10;
+  --sb-card: #0c0e13;
+  --sb-card-hover: #101318;
+
+  --sb-border: #1a1e26;
+  --sb-border-hover: #28303e;
+
+  --sb-heading: #e6eaf0;
+  --sb-text: #c0c6d0;
+  --sb-text-dim: #6a7480;
+  --sb-text-dimmer: #3c434c;
+
+  --sb-accent-bg: #1a4280;
+  --sb-accent-border: #254e96;
+  --sb-accent-text: #5580c8;
+
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Type scale. Base 14px matches the institution's html font-size. */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+
+  /*
+   * Panel geometry. The boot mark's flight path is derived from these in CSS,
+   * so the panel and the mark cannot drift apart, and neither surface has to
+   * measure the other. Under labwc they are separate layer-shell clients and
+   * measuring across them is not possible.
+   */
+  --panel-height: 44px;
+  --panel-pad-x: 12px;
+  --launcher-pad-x: 10px;
+  --launcher-pip: 9px;
+  --launcher-gap: 8px;
+  --launcher-word-x: calc(
+    var(--panel-pad-x) + var(--launcher-pad-x) + var(--launcher-pip) +
+      var(--launcher-gap)
+  );
+
+  /* Unitless so the boot mark can scale by the ratio between them. */
+  --launcher-word-size: 13;
+  --boot-mark-size: 38;
+
+  /* One easing, used everywhere motion answers an action. */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+}

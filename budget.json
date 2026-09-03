@@ -1,0 +1,26 @@
+{
+  "_": "Raising any number here is a tracked diff. Say why in the commit message.",
+  "buckets": [
+    {
+      "name": "JavaScript",
+      "match": "assets/**/*.js",
+      "limitKb": 80
+    },
+    {
+      "name": "CSS",
+      "match": "assets/**/*.css",
+      "limitKb": 14
+    },
+    {
+      "name": "Fonts",
+      "match": "fonts/**/*.woff2",
+      "limitKb": 60,
+      "_": "Plex Sans variable (29.6) + Cormorant 300 (14.1) + Plex Mono to come. Already subset to the OS glyph set; woff2 does not gzip further. Fonts are on-disk on the real device, so this is not a cold-load cost there."
+    },
+    {
+      "name": "HTML",
+      "match": "**/*.html",
+      "limitKb": 3
+    }
+  ]
+}

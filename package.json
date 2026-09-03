@@ -1,0 +1,21 @@
+{
+  "name": "southbag-os",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "svelte-check --tsconfig ./tsconfig.json && vite build && bun run budget",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "budget": "bun run scripts/budget.ts"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@tsconfig/svelte": "^5.0.5",
+    "@types/node": "^26.4.1",
+    "svelte": "^5.43.4",
+    "svelte-check": "^4.3.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9"
+  }
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Southbag</title>
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="%BASE_URL%fonts/cormorant-300.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="%BASE_URL%fonts/plex-sans.woff2"
+      crossorigin
+    />
+    <style>
+      /*
+       * Declared here rather than in the bundle so the boot mark can be set
+       * in its real face before any script has run.
+       */
+      @font-face {
+        font-family: "IBM Plex Sans";
+        src: url("%BASE_URL%fonts/plex-sans.woff2") format("woff2-variations");
+        font-weight: 400 500;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Cormorant Garamond";
+        src: url("%BASE_URL%fonts/cormorant-300.woff2") format("woff2");
+        font-weight: 300;
+        font-display: block;
+      }
+      html {
+        background: #050608;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="desktop"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
