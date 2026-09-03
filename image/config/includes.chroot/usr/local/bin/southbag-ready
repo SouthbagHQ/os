@@ -1,18 +1,45 @@
 #!/bin/sh
-# Confirms the shell is actually being served, and says so on the console.
+# Reports what actually came up, on the console.
 #
-# Useful on real hardware, and it is what the CI smoke boot greps for.
-set -eu
+# Useful on real hardware, and it is what the CI smoke boot greps for. It
+# checks the session as well as the assets: a check that only proved the file
+# server was running would pass with a dead compositor, which is precisely the
+# failure worth catching.
+set -u
 
-i=0
-while [ "$i" -lt 60 ]; do
-  if busybox wget -q -O /dev/null http://127.0.0.1:8080/index.html; then
-    echo "SOUTHBAG-OS-READY" > /dev/console
-    exit 0
-  fi
-  sleep 1
-  i=$((i + 1))
-done
+wait_for() {
+  i=0
+  while [ "$i" -lt "$2" ]; do
+    if $1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
 
-echo "SOUTHBAG-OS-ASSETS-FAILED" > /dev/console
-exit 1
+assets_up() { busybox wget -q -O /dev/null http://127.0.0.1:8080/index.html; }
+compositor_up() { busybox pidof labwc >/dev/null 2>&1; }
+shell_up() { busybox pidof cog >/dev/null 2>&1; }
+
+if wait_for assets_up 60; then
+  echo "SOUTHBAG-OS-ASSETS-OK" > /dev/console
+else
+  echo "SOUTHBAG-OS-ASSETS-FAILED" > /dev/console
+  exit 1
+fi
+
+if wait_for compositor_up 60; then
+  echo "SOUTHBAG-OS-COMPOSITOR-OK" > /dev/console
+else
+  echo "SOUTHBAG-OS-COMPOSITOR-FAILED" > /dev/console
+  exit 1
+fi
+
+if wait_for shell_up 60; then
+  echo "SOUTHBAG-OS-READY" > /dev/console
+else
+  echo "SOUTHBAG-OS-SHELL-FAILED" > /dev/console
+  exit 1
+fi

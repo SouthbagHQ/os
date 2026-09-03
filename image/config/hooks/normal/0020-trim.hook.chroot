@@ -3,5 +3,8 @@
 set -eu
 
 rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale
-rm -rf /usr/share/X11 /var/cache/apt/archives/*.deb
+rm -rf /var/cache/apt/archives/*.deb
+
+# /usr/share/X11 stays. It holds xkeyboard-config, which labwc needs through
+# libxkbcommon; without it the device has no working keyboard.
 find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 ! -name UTC ! -name Etc -exec rm -rf {} + 2>/dev/null || true

@@ -6,6 +6,4 @@
 # the user manager is not attached to it.
 set -eu
 
-[ "$(tty)" = "/dev/tty1" ] || exit 0
-
 exec /usr/bin/labwc -s /usr/local/bin/southbag-shell

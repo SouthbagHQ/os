@@ -3,14 +3,18 @@
 set -eu
 
 adduser --disabled-password --gecos "" customer
-# Seat and input access for the compositor.
-adduser customer video
-adduser customer input
-adduser customer render
+# Seat and input access for the compositor. These groups are created by
+# systemd's sysusers, which may not have run yet in the chroot, so a missing
+# group is not a build failure.
+for group in video input render seat; do
+  adduser customer "$group" 2>/dev/null || true
+done
 
 # The session starts from the login shell on tty1. See southbag-session.
 cat > /home/customer/.profile <<'PROFILE'
-[ -x /usr/local/bin/southbag-session ] && . /usr/local/bin/southbag-session
+# exec, not source: sourcing would leak the session script's shell options
+# into the login shell, and its early exit would log the customer out.
+[ "$(tty)" = "/dev/tty1" ] && exec /usr/local/bin/southbag-session
 PROFILE
 chown customer:customer /home/customer/.profile
 

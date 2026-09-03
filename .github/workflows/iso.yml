@@ -46,10 +46,14 @@ jobs:
           echo "--- serial tail ---"
           tail -80 serial.log || true
 
+          # SOUTHBAG-OS-READY is only printed once the assets are served,
+          # labwc is up and cog is running. Anything less is a broken image.
+          grep -o "SOUTHBAG-OS-[A-Z-]*" serial.log | sort -u || true
+
           if grep -q "SOUTHBAG-OS-READY" serial.log; then
-            echo "Booted to a served shell."
+            echo "Booted to a running shell."
           else
-            echo "::error::ISO did not reach a served shell. See serial.log."
+            echo "::error::ISO did not reach a running shell. See serial.log."
             exit 1
           fi
 
