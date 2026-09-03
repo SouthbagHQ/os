@@ -126,9 +126,12 @@
   .greeting {
     position: fixed;
     left: 50%;
-    top: 50%;
+    /* Centred in the space above the panel, not in the screen. */
+    top: calc(50% - var(--panel-height) / 2);
     translate: -50% -50%;
     margin: 0;
+    max-width: min(88vw, 30ch);
+    padding: 0 16px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -150,14 +153,15 @@
   .line {
     font-family: var(--font-display);
     font-weight: 300;
-    font-size: 42px;
+    /* Degrades on a narrow viewport rather than being redesigned for one. */
+    font-size: clamp(26px, 4.4vw, 42px);
     line-height: 1.1;
     letter-spacing: 0.01em;
     color: var(--sb-heading);
   }
 
   .under {
-    font-size: var(--text-md);
+    font-size: clamp(var(--text-sm), 1.4vw, var(--text-md));
     color: var(--sb-text-dim);
   }
 </style>
