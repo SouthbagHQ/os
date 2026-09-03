@@ -36,7 +36,6 @@ docker run --rm --privileged \
     # graphical one is weight for a step taken once.
     lb config \
       --distribution trixie \
-      --hostname southbag \
       --architecture amd64 \
       --archive-areas main \
       --binary-images iso-hybrid \
@@ -47,7 +46,7 @@ docker run --rm --privileged \
       --apt-recommends false \
       --apt-indices false \
       --firmware-chroot false \
-      --bootappend-live "boot=live console=tty0 console=ttyS0,115200n8" \
+      --bootappend-live "boot=live live-config.hostname=southbag console=tty0 console=ttyS0,115200n8" \
       --iso-application "Southbag OS" \
       --iso-publisher "Southbag" \
       --iso-volume "Southbag OS"
