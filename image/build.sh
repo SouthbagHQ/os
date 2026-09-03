@@ -40,7 +40,7 @@ docker run --rm --privileged \
       --apt-recommends false \
       --apt-indices false \
       --firmware-chroot false \
-      --bootappend-live "boot=live quiet console=tty0 console=ttyS0,115200n8" \
+      --bootappend-live "boot=live console=tty0 console=ttyS0,115200n8" \
       --iso-application "Southbag OS" \
       --iso-publisher "Southbag" \
       --iso-volume "Southbag OS"

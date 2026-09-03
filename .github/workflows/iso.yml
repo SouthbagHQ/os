@@ -32,9 +32,20 @@ jobs:
             qemu-system-x86 ovmf
           cp /usr/share/OVMF/OVMF_VARS_4M.fd vars.fd
 
+          # Without KVM this is pure emulation and does not reach userspace in
+          # any reasonable time, which is exactly how the first run failed.
+          if [ -w /dev/kvm ]; then
+            echo "KVM available."
+            accel="-accel kvm -cpu host"
+          else
+            echo "::warning::No KVM. Falling back to emulation, which is slow."
+            accel="-accel tcg -cpu max"
+          fi
+
           # UEFI, 2GB of RAM: the memory profile the OS is meant to run in.
-          timeout 300 qemu-system-x86_64 \
-            -machine q35 -m 2048 -smp 2 -nographic \
+          timeout 840 qemu-system-x86_64 \
+            $accel \
+            -machine q35 -m 2048 -smp 2 -nographic -no-reboot \
             -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,unit=1,file=vars.fd \
             -device virtio-gpu-pci \
@@ -58,9 +69,12 @@ jobs:
           fi
 
       - name: Report size
-        run: ls -lh out/southbag-os.iso
+        if: always()
+        run: ls -lh out/southbag-os.iso || true
 
+      # Always: a failed boot is exactly when the ISO and the log are wanted.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: southbag-os-iso
           path: |
