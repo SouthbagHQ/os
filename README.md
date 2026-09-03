@@ -76,6 +76,37 @@ Timings live in `src/surfaces/boot/sequence.svelte.ts`. In development,
 `?boot=6` stretches both the beats and the travel so the sequence can be
 watched.
 
+## Building and installing
+
+The ISO is built by CI on every push that touches the image or the shell, and
+uploaded as a workflow artifact. To build it yourself you need Linux with
+Docker; it cannot be built on macOS.
+
+```sh
+bun run build:device
+./image/build.sh
+```
+
+The result is `out/southbag-os.iso`. Write it to a USB stick — this destroys
+everything on the target device, so check the identifier twice:
+
+```sh
+# Linux
+sudo dd if=out/southbag-os.iso of=/dev/sdX bs=4M status=progress conv=fsync
+
+# macOS: the r-device is the raw one, and is far faster
+diskutil unmountDisk /dev/diskN
+sudo dd if=out/southbag-os.iso of=/dev/rdiskN bs=4m status=progress
+```
+
+The ISO offers two things. Booting live runs the OS off the stick and touches
+nothing. The installer copies that same filesystem onto the disk, so what ends
+up installed is this image rather than a stock Debian reassembled from
+packages.
+
+**amd64, UEFI only.** It will not boot on an Apple Silicon Mac, and there is
+no BIOS/CSM path.
+
 ## Target platform
 
 Debian stable, systemd, Wayland, no X11. `labwc` owns compositing, input and

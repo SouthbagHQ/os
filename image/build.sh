@@ -29,14 +29,20 @@ docker run --rm --privileged \
     # UEFI only. grub-efi rather than systemd-boot: a hybrid live ISO is not
     # the A/B verity layout systemd-boot was chosen for, and grub-efi is what
     # live-build can actually produce here.
+    #
+    # --debian-installer live, not true: the installer copies the live
+    # filesystem onto the disk, so what gets installed is this image rather
+    # than a stock Debian reassembled from packages. Text installer; the
+    # graphical one is weight for a step taken once.
     lb config \
       --distribution trixie \
       --architecture amd64 \
       --archive-areas main \
       --binary-images iso-hybrid \
       --bootloaders grub-efi \
-      --debian-installer none \
       --memtest none \
+      --debian-installer live \
+      --debian-installer-gui false \
       --apt-recommends false \
       --apt-indices false \
       --firmware-chroot false \
