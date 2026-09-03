@@ -1,9 +1,15 @@
 #!/bin/sh
 # The session.
 #
-# Started from the login shell rather than a systemd user unit: the compositor
-# needs the seat and DRM master that come with the logind session on tty1, and
-# the user manager is not attached to it.
+# Started from the login shell on tty1, not a systemd user unit: the
+# compositor needs the seat and DRM master that come with the logind session,
+# and the user manager is not attached to it.
 set -eu
 
-exec /usr/bin/labwc -s /usr/local/bin/southbag-shell
+# Says the autologin worked and we got this far. Without it, a compositor that
+# never starts is indistinguishable from a login that never happened.
+echo "SOUTHBAG-OS-SESSION-START" > /dev/console 2>/dev/null || true
+
+# labwc's own diagnosis, kept where the readiness check can find it.
+exec /usr/bin/labwc -s /usr/local/bin/southbag-shell \
+  >"$HOME/session.log" 2>&1

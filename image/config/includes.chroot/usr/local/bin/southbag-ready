@@ -34,6 +34,13 @@ if wait_for compositor_up 60; then
   echo "SOUTHBAG-OS-COMPOSITOR-OK" > /dev/console
 else
   echo "SOUTHBAG-OS-COMPOSITOR-FAILED" > /dev/console
+  # Whatever labwc said on its way out. A marker that only reports the stage
+  # tells you where it broke but never why.
+  {
+    echo "--- session log ---"
+    cat /home/customer/session.log 2>/dev/null || echo "(no session log: autologin may not have run)"
+    echo "--- end ---"
+  } > /dev/console 2>/dev/null || true
   exit 1
 fi
 

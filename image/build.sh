@@ -36,6 +36,7 @@ docker run --rm --privileged \
     # graphical one is weight for a step taken once.
     lb config \
       --distribution trixie \
+      --hostname southbag \
       --architecture amd64 \
       --archive-areas main \
       --binary-images iso-hybrid \
