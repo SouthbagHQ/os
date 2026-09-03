@@ -1,0 +1,18 @@
+#!/bin/sh
+# Confirms the shell is actually being served, and says so on the console.
+#
+# Useful on real hardware, and it is what the CI smoke boot greps for.
+set -eu
+
+i=0
+while [ "$i" -lt 60 ]; do
+  if busybox wget -q -O /dev/null http://127.0.0.1:8080/index.html; then
+    echo "SOUTHBAG-OS-READY" > /dev/console
+    exit 0
+  fi
+  sleep 1
+  i=$((i + 1))
+done
+
+echo "SOUTHBAG-OS-ASSETS-FAILED" > /dev/console
+exit 1

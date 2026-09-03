@@ -1,0 +1,8 @@
+#!/bin/sh
+# Starts the shell. Run by labwc once the compositor is up.
+set -eu
+
+exec /usr/bin/cog \
+  --platform=wayland \
+  --bg-color=#050608 \
+  http://127.0.0.1:8080/

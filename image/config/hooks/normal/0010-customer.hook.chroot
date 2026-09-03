@@ -1,0 +1,22 @@
+#!/bin/sh
+# Creates the account the device belongs to, and enables the session.
+set -eu
+
+adduser --disabled-password --gecos "" customer
+# Seat and input access for the compositor.
+adduser customer video
+adduser customer input
+adduser customer render
+
+# The session starts from the login shell on tty1. See southbag-session.
+cat > /home/customer/.profile <<'PROFILE'
+[ -x /usr/local/bin/southbag-session ] && . /usr/local/bin/southbag-session
+PROFILE
+chown customer:customer /home/customer/.profile
+
+systemctl enable southbag-shell-assets.service
+systemctl enable southbag-ready.service
+systemctl enable seatd.service
+
+# Nothing waits for the network to come up before showing a desktop.
+systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true

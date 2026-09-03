@@ -1,0 +1,7 @@
+#!/bin/sh
+# Size is a feature. Anything the device never reads does not ship.
+set -eu
+
+rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale
+rm -rf /usr/share/X11 /var/cache/apt/archives/*.deb
+find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 ! -name UTC ! -name Etc -exec rm -rf {} + 2>/dev/null || true

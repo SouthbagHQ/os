@@ -1,0 +1,11 @@
+#!/bin/sh
+# The session.
+#
+# Started from the login shell rather than a systemd user unit: the compositor
+# needs the seat and DRM master that come with the logind session on tty1, and
+# the user manager is not attached to it.
+set -eu
+
+[ "$(tty)" = "/dev/tty1" ] || exit 0
+
+exec /usr/bin/labwc -s /usr/local/bin/southbag-shell

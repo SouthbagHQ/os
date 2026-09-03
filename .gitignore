@@ -2,3 +2,17 @@ node_modules
 dist
 .DS_Store
 *.local
+dist-device
+out
+image/config/includes.chroot/usr/share/southbag-shell
+image/.build
+image/cache
+image/chroot
+image/binary
+image/local
+image/auto
+image/*.iso
+image/*.log
+image/*.contents
+image/*.files
+image/*.packages

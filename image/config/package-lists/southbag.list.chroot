@@ -1,0 +1,20 @@
+# The whole operating system.
+#
+# Nothing is here for convenience. Every package costs boot time, memory and
+# image size, and the target is a machine from 2013 with 2GB of RAM.
+
+# Boot
+live-boot
+systemd-sysv
+linux-image-amd64
+
+# Session: a compositor, a browser engine, and seat access. That is all.
+labwc
+cog
+seatd
+
+# Serves the shell over loopback so it has ordinary web origin semantics
+# rather than file://, which WebKit treats as opaque for fonts and fetches.
+busybox
+
+dbus

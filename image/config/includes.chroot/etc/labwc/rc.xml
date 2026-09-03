@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  labwc owns compositing, input and window geometry.
+
+  The shell is a single fullscreen cog window with no decoration. cog cannot
+  be a layer-shell client — its Wayland platform speaks xdg_shell only — so
+  fullscreen is imposed here rather than requested by the client.
+-->
+<labwc_config>
+  <core>
+    <decoration>none</decoration>
+    <gap>0</gap>
+  </core>
+
+  <theme>
+    <cornerRadius>0</cornerRadius>
+  </theme>
+
+  <windowRules>
+    <windowRule identifier="cog" serverDecoration="no">
+      <skipTaskbar>yes</skipTaskbar>
+      <skipWindowSwitcher>yes</skipWindowSwitcher>
+      <action name="ToggleFullscreen" />
+    </windowRule>
+  </windowRules>
+
+  <keyboard>
+    <!--
+      No compositor keybindings. Every shortcut belongs to the shell, so that
+      the browser build and the device agree on what the keyboard does.
+    -->
+  </keyboard>
+</labwc_config>

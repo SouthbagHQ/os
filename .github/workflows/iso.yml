@@ -1,0 +1,65 @@
+name: iso
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "image/**"
+      - "src/**"
+      - "index.html"
+      - ".github/workflows/iso.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+      - name: Build the shell for the device
+        run: bun run build:device
+
+      - name: Build the ISO
+        run: ./image/build.sh
+
+      - name: Smoke boot it
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            qemu-system-x86 ovmf
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd vars.fd
+
+          # UEFI, 2GB of RAM: the memory profile the OS is meant to run in.
+          timeout 300 qemu-system-x86_64 \
+            -machine q35 -m 2048 -smp 2 -nographic \
+            -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,unit=1,file=vars.fd \
+            -device virtio-gpu-pci \
+            -cdrom out/southbag-os.iso \
+            -boot d \
+            -serial file:serial.log \
+            -monitor none -display none || true
+
+          echo "--- serial tail ---"
+          tail -80 serial.log || true
+
+          if grep -q "SOUTHBAG-OS-READY" serial.log; then
+            echo "Booted to a served shell."
+          else
+            echo "::error::ISO did not reach a served shell. See serial.log."
+            exit 1
+          fi
+
+      - name: Report size
+        run: ls -lh out/southbag-os.iso
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: southbag-os-iso
+          path: |
+            out/southbag-os.iso
+            serial.log
+          if-no-files-found: error

@@ -1,0 +1,12 @@
+[Unit]
+Description=Southbag OS readiness marker
+After=southbag-shell-assets.service
+Requires=southbag-shell-assets.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/southbag-ready
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
