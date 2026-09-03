@@ -14,6 +14,7 @@
   .wallpaper {
     position: fixed;
     inset: 0;
+    z-index: var(--z-wallpaper);
     background-color: var(--sb-bg);
     background-image:
       linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),

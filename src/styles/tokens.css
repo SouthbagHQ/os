@@ -59,6 +59,17 @@
   --launcher-word-size: 13;
   --boot-mark-size: 38;
 
+  /*
+   * Stacking. Windows carry their own z-index inside the work area, which is
+   * a stacking context, so they can never rise above the panel.
+   */
+  --z-wallpaper: 0;
+  --z-windows: 1;
+  --z-greeting: 30;
+  --z-panel: 20;
+  --z-launcher: 40;
+  --z-boot: 60;
+
   /* One easing, used everywhere motion answers an action. */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 }

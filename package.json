@@ -7,11 +7,14 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build && bun run budget",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "budget": "bun run scripts/budget.ts"
+    "budget": "bun run scripts/budget.ts",
+    "build:device": "vite build --base=/ --outDir dist-device",
+    "test": "bun test"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tsconfig/svelte": "^5.0.5",
+    "@types/bun": "^1.4.0",
     "@types/node": "^26.4.1",
     "svelte": "^5.43.4",
     "svelte-check": "^4.3.2",

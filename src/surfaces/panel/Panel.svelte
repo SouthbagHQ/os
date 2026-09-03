@@ -4,8 +4,20 @@
   import type { Customer } from "../../platform/identity";
   import { firstName } from "../../platform/identity";
   import Battery from "./Battery.svelte";
+  import type { DomWindowHost } from "../../wm/host.svelte";
+  import { appById } from "../../apps/registry";
 
-  let { customer }: { customer: Customer } = $props();
+  let {
+    customer,
+    host,
+    launcherOpen,
+    ontogglelauncher,
+  }: {
+    customer: Customer;
+    host: DomWindowHost;
+    launcherOpen: boolean;
+    ontogglelauncher: () => void;
+  } = $props();
 
   const clock = createClock();
   const shown = $derived(sequence.atLeast("panel"));
@@ -14,12 +26,33 @@
 </script>
 
 <div class="panel" class:shown>
-  <button class="launcher" class:visible={markVisible}>
+  <button
+    class="launcher"
+    class:visible={markVisible}
+    aria-expanded={launcherOpen}
+    onclick={ontogglelauncher}
+  >
     <span class="pip" aria-hidden="true"></span>
     <span class="word">Southbag</span>
   </button>
 
-  <div class="windows"></div>
+  <div class="windows">
+    {#each host.windows as managed (managed.id)}
+      <button
+        class="task"
+        class:active={host.focusedId === managed.id}
+        aria-current={host.focusedId === managed.id}
+        onclick={() =>
+          host.focusedId === managed.id
+            ? host.toggleMinimise(managed.id)
+            : (managed.minimised
+                ? host.toggleMinimise(managed.id)
+                : host.focus(managed.id))}
+      >
+        {appById(managed.appId)?.name ?? managed.title}
+      </button>
+    {/each}
+  </div>
 
   <div class="status">
     <span class="clock">{formatTime(clock.now)}</span>
@@ -32,6 +65,7 @@
   .panel {
     position: fixed;
     inset: auto 0 0 0;
+    z-index: var(--z-panel);
     height: var(--panel-height);
     display: flex;
     align-items: stretch;
@@ -92,10 +126,25 @@
   .windows {
     flex: 1;
     display: flex;
+    align-items: stretch;
+    gap: 1px;
+    padding: 6px 8px;
+    min-width: 0;
+  }
+
+  .task {
+    display: flex;
     align-items: center;
-    gap: 2px;
-    margin: 8px 4px;
-    padding: 0 8px;
+    max-width: 160px;
+    white-space: nowrap;
+    overflow: hidden;
+    /* The rule under a task encodes which window has focus. Nothing else. */
+    border-bottom: 1px solid transparent;
+  }
+
+  .task.active {
+    color: var(--sb-heading);
+    border-bottom-color: var(--sb-accent-text);
   }
 
   .status {

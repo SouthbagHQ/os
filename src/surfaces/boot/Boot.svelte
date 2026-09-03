@@ -29,13 +29,10 @@
     if (!greeted) return;
     const go = () => (dismissed = true);
     const options = { once: true, passive: true } as const;
-    addEventListener("pointermove", go, options);
-    addEventListener("keydown", go, options);
-    addEventListener("wheel", go, options);
+    const events = ["pointermove", "pointerdown", "keydown", "wheel"] as const;
+    for (const event of events) addEventListener(event, go, options);
     return () => {
-      removeEventListener("pointermove", go);
-      removeEventListener("keydown", go);
-      removeEventListener("wheel", go);
+      for (const event of events) removeEventListener(event, go);
     };
   });
 </script>
@@ -64,6 +61,7 @@
   .curtain {
     position: fixed;
     inset: 0;
+    z-index: var(--z-boot);
     background: var(--sb-bg);
     opacity: 1;
     transition: opacity 500ms var(--ease);
@@ -87,6 +85,7 @@
     position: fixed;
     left: 0;
     top: 0;
+    z-index: calc(var(--z-boot) + 1);
     transform-origin: 0 50%;
     transform: translate(calc(50vw - 50%), calc(50vh - 50%));
     font-family: var(--font-display);
@@ -128,9 +127,12 @@
     left: 50%;
     /* Centred in the space above the panel, not in the screen. */
     top: calc(50% - var(--panel-height) / 2);
+    z-index: var(--z-greeting);
     translate: -50% -50%;
     margin: 0;
-    max-width: min(88vw, 30ch);
+    /* Not a ch cap: this element's font is the body face, not the display
+       face the greeting is set in, so ch here is far narrower than it looks. */
+    max-width: min(88vw, 620px);
     padding: 0 16px;
     display: flex;
     flex-direction: column;

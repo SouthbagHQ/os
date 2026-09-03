@@ -13,5 +13,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - run: bun test
       # Fails the job when a bucket in budget.json is exceeded.
       - run: bun run build
