@@ -4,7 +4,7 @@
   import type { Customer } from "../../platform/identity";
   import { firstName } from "../../platform/identity";
   import Battery from "./Battery.svelte";
-  import type { DomWindowHost } from "../../wm/host.svelte";
+  import type { WindowHost } from "../../wm/host.svelte";
   import { appById } from "../../apps/registry";
 
   let {
@@ -14,7 +14,7 @@
     ontogglelauncher,
   }: {
     customer: Customer;
-    host: DomWindowHost;
+    host: WindowHost;
     launcherOpen: boolean;
     ontogglelauncher: () => void;
   } = $props();

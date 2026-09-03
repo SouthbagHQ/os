@@ -1,0 +1,36 @@
+#!/bin/sh
+# Opens an app as its own window.
+#
+# The shell is a web page and cannot start processes, so this is the seam:
+# the launcher asks for an app by id and gets back a cog process of its own,
+# which labwc manages as an ordinary window. One app, one process, one origin
+# — which is the property that makes this a ChromeOS-shaped system rather
+# than a single page pretending to be a desktop.
+#
+# Runs inside the customer's Wayland session, so the process it spawns
+# inherits WAYLAND_DISPLAY and appears on the seat.
+set -eu
+
+app=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^app=\([a-z][a-z0-9-]*\)$/\1/p')
+
+# Whitelist. The id reaches this from a web page, and is never interpolated
+# into anything without passing through here first.
+case "$app" in
+  files|banking|office|chat|code|terminal|branches|lore|kevin|settings|browser) ;;
+  *)
+    printf 'Status: 400\r\nContent-Type: text/plain\r\n\r\nunknown app\r\n'
+    exit 0
+    ;;
+esac
+
+# The app id has to be distinct per app, and not merely for tidiness: cog is
+# a singleton GApplication, so a second cog sharing an id forwards to the
+# running instance instead of starting a process of its own. It is also what
+# lets the compositor tell the shell and an app apart.
+/usr/bin/cog \
+  --gapplication-app-id="cc.southbag.$app" \
+  --platform=wayland \
+  --bg-color=#0c0e13 \
+  "http://127.0.0.1:8080/?app=$app" >/dev/null 2>&1 &
+
+printf 'Status: 204\r\n\r\n'

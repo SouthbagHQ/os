@@ -54,7 +54,7 @@ jobs:
             usr/local/bin/southbag-session \
             usr/local/bin/southbag-ready \
             etc/labwc/rc.xml \
-            etc/systemd/system/southbag-shell-assets.service \
+            usr/share/southbag-shell/cgi-bin/launch \
             usr/bin/cog \
             usr/bin/labwc
           do

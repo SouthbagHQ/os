@@ -15,6 +15,7 @@ export const APPS: AppManifest[] = [
   { id: "branches", name: "Branch locator", size: { width: 720, height: 520 }, min: { width: 400, height: 320 } },
   { id: "lore", name: "Lore", size: { width: 700, height: 540 }, min: { width: 400, height: 320 } },
   { id: "kevin", name: "Kevin", size: { width: 520, height: 560 }, min: { width: 360, height: 320 } },
+  { id: "browser", name: "Browser", size: { width: 900, height: 620 }, min: { width: 400, height: 300 } },
   { id: "settings", name: "Settings", size: { width: 640, height: 560 }, min: { width: 400, height: 320 } },
 ];
 

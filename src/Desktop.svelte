@@ -5,13 +5,19 @@
   import Launcher from "./surfaces/launcher/Launcher.svelte";
   import Windows from "./wm/Windows.svelte";
   import { DomWindowHost } from "./wm/host.svelte";
+  import { CogWindowHost } from "./wm/cog-host.svelte";
   import { appById } from "./apps/registry";
   import { sequence } from "./surfaces/boot/sequence.svelte";
   import type { Customer } from "./platform/identity";
 
   let { customer }: { customer: Customer } = $props();
 
-  const host = new DomWindowHost();
+  // On the device the compositor owns windows, so opening an app starts a
+  // process rather than drawing a frame. In a browser there is no compositor,
+  // so the shell draws them itself. Everything downstream sees one interface.
+  const onDevice = import.meta.env.MODE === "device";
+  const host = onDevice ? new CogWindowHost() : new DomWindowHost();
+  const drawnHost = $derived(host instanceof DomWindowHost ? host : null);
   let launcherOpen = $state(false);
 
   function openApp(id: string) {
@@ -33,7 +39,9 @@
 </script>
 
 <Wallpaper />
-<Windows {host} {customer} />
+{#if drawnHost}
+  <Windows host={drawnHost} {customer} />
+{/if}
 <Panel
   {customer}
   {host}

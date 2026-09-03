@@ -1,7 +1,8 @@
 [Unit]
 Description=Southbag OS readiness marker
-After=southbag-shell-assets.service
-Requires=southbag-shell-assets.service
+# The session brings up the compositor and the asset server; this only
+# watches for them and reports on the console.
+After=systemd-user-sessions.service
 
 [Service]
 Type=oneshot

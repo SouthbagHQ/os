@@ -18,7 +18,6 @@ cat > /home/customer/.profile <<'PROFILE'
 PROFILE
 chown customer:customer /home/customer/.profile
 
-systemctl enable southbag-shell-assets.service
 systemctl enable southbag-ready.service
 systemctl enable seatd.service
 

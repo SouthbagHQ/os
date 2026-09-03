@@ -8,7 +8,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "budget": "bun run scripts/budget.ts",
-    "build:device": "vite build --base=/ --outDir dist-device",
+    "build:device": "vite build --base=/ --outDir dist-device --mode device",
     "test": "bun test"
   },
   "devDependencies": {

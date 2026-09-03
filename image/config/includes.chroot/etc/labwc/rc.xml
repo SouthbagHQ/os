@@ -8,7 +8,11 @@
 -->
 <labwc_config>
   <core>
-    <decoration>none</decoration>
+    <!--
+      Apps are ordinary windows and get decoration. The shell is not, and is
+      overridden below.
+    -->
+    <decoration>server</decoration>
     <gap>0</gap>
   </core>
 
@@ -17,10 +21,16 @@
   </theme>
 
   <windowRules>
-    <windowRule identifier="cog" serverDecoration="no">
+    <!--
+      The shell is the desktop: fullscreen, undecorated, underneath
+      everything, and absent from the window switcher. It is not a window the
+      customer is meant to think of as a window.
+    -->
+    <windowRule identifier="cc.southbag.shell" serverDecoration="no">
       <skipTaskbar>yes</skipTaskbar>
       <skipWindowSwitcher>yes</skipWindowSwitcher>
       <action name="ToggleFullscreen" />
+      <action name="ToggleAlwaysOnBottom" />
     </windowRule>
   </windowRules>
 

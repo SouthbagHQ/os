@@ -14,10 +14,15 @@ if [[ ! -d "$repo/dist-device" ]]; then
   exit 1
 fi
 
-# The shell is ordinary files on disk, served over loopback at boot.
-rm -rf "$here/config/includes.chroot/usr/share/southbag-shell"
-mkdir -p "$here/config/includes.chroot/usr/share/southbag-shell"
-cp -R "$repo/dist-device/." "$here/config/includes.chroot/usr/share/southbag-shell/"
+# The shell is ordinary files on disk, served over loopback at boot. This
+# directory is generated, so anything hand-written that belongs beside the
+# bundle — the launcher CGI — is kept in shell-extra and copied in after.
+served="$here/config/includes.chroot/usr/share/southbag-shell"
+rm -rf "$served"
+mkdir -p "$served"
+cp -R "$repo/dist-device/." "$served/"
+cp -R "$here/shell-extra/." "$served/"
+chmod +x "$served/cgi-bin/launch"
 
 docker run --rm --privileged \
   -v "$here:/image" -w /image \

@@ -23,24 +23,24 @@ assets_up() { busybox wget -q -O /dev/null http://127.0.0.1:8080/index.html; }
 compositor_up() { busybox pidof labwc >/dev/null 2>&1; }
 shell_up() { busybox pidof cog >/dev/null 2>&1; }
 
-if wait_for assets_up 60; then
-  echo "SOUTHBAG-OS-ASSETS-OK" > /dev/console
-else
-  echo "SOUTHBAG-OS-ASSETS-FAILED" > /dev/console
-  exit 1
-fi
-
-if wait_for compositor_up 60; then
+# The asset server now starts inside the session rather than as a system
+# service, so it comes up after the compositor rather than before it.
+if wait_for compositor_up 90; then
   echo "SOUTHBAG-OS-COMPOSITOR-OK" > /dev/console
 else
   echo "SOUTHBAG-OS-COMPOSITOR-FAILED" > /dev/console
-  # Whatever labwc said on its way out. A marker that only reports the stage
-  # tells you where it broke but never why.
   {
     echo "--- session log ---"
     cat /home/customer/session.log 2>/dev/null || echo "(no session log: autologin may not have run)"
     echo "--- end ---"
-  } > /dev/console 2>/dev/null || true
+  } > /dev/console 2>&1 || true
+  exit 1
+fi
+
+if wait_for assets_up 60; then
+  echo "SOUTHBAG-OS-ASSETS-OK" > /dev/console
+else
+  echo "SOUTHBAG-OS-ASSETS-FAILED" > /dev/console
   exit 1
 fi
 
