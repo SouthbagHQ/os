@@ -1,23 +1,33 @@
 #!/bin/sh
 # GRUB has to talk to the serial port, and it has to stop waiting.
 #
-# Left alone, live-build's GRUB writes its menu to a video console and waits
-# for a keypress. On a headless machine that is an indefinite hang with no
-# output at all, which is exactly how this failed: UEFI handed off to GRUB and
-# nothing was ever heard again.
+# live-build's generated config sets `terminal_output gfxterm` and no timeout
+# at all, so the menu waits forever for a keypress and says nothing on the
+# serial console. Headless that is an indefinite hang with no output; on the
+# device it is a menu the brief says should not exist.
 #
-# It is also wrong for the product. The device is not supposed to show a menu.
+# The path is searched from the current directory because live-build runs
+# binary hooks from inside the binary tree, and finding nothing is a failure
+# rather than a silent no-op: the previous version of this hook looked in
+# binary/ from the wrong directory, matched nothing, and exited zero.
 set -eu
 
-for cfg in $(find binary -name grub.cfg 2>/dev/null); do
+found=0
+for cfg in $(find . -path "*/boot/grub/grub.cfg" 2>/dev/null); do
   cat >> "$cfg" <<'GRUB'
 
-# Southbag: speak on the serial port as well as the screen, and boot.
+# Southbag: speak on the serial port as well as the screen, and boot on our
+# own rather than waiting to be told to.
 serial --unit=0 --speed=115200
 terminal_input --append serial
 terminal_output --append serial
 set timeout=5
-set timeout_style=menu
 GRUB
-  echo "patched $cfg"
+  echo "P: patched $cfg"
+  found=$((found + 1))
 done
+
+if [ "$found" -eq 0 ]; then
+  echo "E: no boot/grub/grub.cfg found under $(pwd); GRUB would hang." >&2
+  exit 1
+fi

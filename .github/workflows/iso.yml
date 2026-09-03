@@ -66,7 +66,18 @@ jobs:
             fi
           done
 
-          rm -f squashfs.img
+          # The GRUB hand-off fix must be present in the built image. A hook
+          # that quietly does nothing is how the boot hang survived a build.
+          xorriso -osirrox on -indev out/southbag-os.iso \
+            -extract /boot/grub/grub.cfg grub.cfg 2>/dev/null
+          if grep -q "^set timeout=" grub.cfg && grep -q "terminal_output --append serial" grub.cfg; then
+            echo "ok      grub.cfg has a timeout and a serial console"
+          else
+            echo "MISSING grub.cfg boot timeout / serial console"
+            fail=1
+          fi
+
+          rm -f squashfs.img grub.cfg
           [ "$fail" -eq 0 ] || { echo "::error::Image is missing required files."; exit 1; }
 
       # Not blocking. GitHub's standard runners have no KVM, and under pure
