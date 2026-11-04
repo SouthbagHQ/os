@@ -19,6 +19,33 @@
   const host = onDevice ? new CogWindowHost() : new DomWindowHost();
   const drawnHost = $derived(host instanceof DomWindowHost ? host : null);
   let launcherOpen = $state(false);
+  let lockMessage = $state<string | null>(null);
+
+  /**
+   * The compositor owns the lock; the shell just asks for it. It can refuse:
+   * offline (unlock only works online), or nothing signed in to protect.
+   * A refusal is said out loud rather than leaving a desktop that looks
+   * locked but is not.
+   */
+  async function lock() {
+    if (!onDevice) return;
+    lockMessage = null;
+    try {
+      const response = await fetch("/cgi-bin/lock", { method: "POST" });
+      if (!response.ok) {
+        lockMessage = (await response.text()).trim() || "Lock unavailable.";
+      }
+    } catch {
+      lockMessage = "Lock unavailable on this device.";
+    }
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    if (onDevice && event.ctrlKey && event.altKey && (event.key === "l" || event.key === "L")) {
+      event.preventDefault();
+      void lock();
+    }
+  }
 
   function openApp(id: string) {
     const app = appById(id);
@@ -47,6 +74,8 @@
   }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <Wallpaper />
 {#if drawnHost}
   <Windows host={drawnHost} {customer} />
@@ -61,6 +90,28 @@
   open={launcherOpen}
   onopen={openApp}
   onclose={() => (launcherOpen = false)}
+  onlock={() => {
+    launcherOpen = false;
+    void lock();
+  }}
   {onsignout}
 />
+{#if lockMessage}
+  <div class="lock-message" role="alert">{lockMessage}</div>
+{/if}
 <Boot {customer} />
+
+<style>
+  .lock-message {
+    position: fixed;
+    left: 50%;
+    bottom: calc(var(--panel-height) + 16px);
+    transform: translateX(-50%);
+    z-index: calc(var(--z-launcher) + 2);
+    padding: 8px 16px;
+    font-size: var(--text-sm);
+    color: var(--sb-accent-text);
+    background: var(--sb-panel);
+    border: 1px solid var(--sb-border);
+  }
+</style>
