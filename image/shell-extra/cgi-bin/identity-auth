@@ -7,6 +7,12 @@
 # those three calls — a fixed allowlist, not a general proxy — to
 # https://identity.southbag.cc and returns the answer.
 #
+# This server-side OAuth client constructs its own fixed upstream Origin.
+# It sends no Cookie/Authorization headers from callers, follows no caller-
+# selected URL, and requires the shell's Origin before doing any work. OAuth
+# code/client/redirect/PKCE validation remains Identity's responsibility. This
+# is not an authenticated browser session or a bypass for arbitrary forms.
+#
 # Threat model: the httpd listens on loopback only, so every caller is
 # already a process running as the customer on this device — which could
 # reach Identity directly without this script. The proxy holds no credentials
@@ -15,6 +21,14 @@
 # passes through here on its way to Identity; an attacker with local code
 # execution already owns the session either way. Bodies are never logged.
 set -eu
+
+# Only the shell may make state-changing calls. A cross-site form must not
+# acquire the fixed upstream Origin supplied by this server-side client.
+fail() {
+  printf 'Status: %s\r\nContent-Type: text/plain\r\n\r\n%s\r\n' "$1" "$2"
+  exit 0
+}
+[ "${REQUEST_METHOD:-}" = "GET" ] || [ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] || fail 403 "shell only"
 
 ep=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^ep=\([a-z]*\)$/\1/p')
 
@@ -29,11 +43,6 @@ case "$ep" in
     ;;
 esac
 
-fail() {
-  printf 'Status: %s\r\nContent-Type: text/plain\r\n\r\n%s\r\n' "$1" "$2"
-  exit 0
-}
-
 method="${REQUEST_METHOD:-GET}"
 if [ "$ep" = "jwks" ]; then
   [ "$method" = "GET" ] || fail 405 "method not allowed"
@@ -43,11 +52,16 @@ else
   [ "$method" = "POST" ] || fail 405 "method not allowed"
   len="${CONTENT_LENGTH:-0}"
   [ "$len" -gt 0 ] && [ "$len" -lt 16384 ] || fail 400 "bad request body"
+  case "$ep:${CONTENT_TYPE:-}" in
+    token:application/x-www-form-urlencoded|register:application/json) ;;
+    *) fail 415 "unsupported content type" ;;
+  esac
   body=$(dd bs=1 count="$len" 2>/dev/null)
   # A 4xx from Identity loses its body here (busybox wget); the page reports
   # the status, not the detail, on this path.
   out=$(busybox wget -q -O - \
     --post-data "$body" \
+    --header "Origin: https://identity.southbag.cc" \
     --header "Content-Type: ${CONTENT_TYPE:-application/json}" \
     "https://identity.southbag.cc$path" 2>/dev/null) \
     || fail 502 "identity refused"
