@@ -49,9 +49,13 @@ async function main() {
     target,
     props: {
       customer: session.customer,
-      onsignout: () => {
-        logout();
-        location.reload();
+      onsignout: async () => {
+        try {
+          await logout();
+          location.reload();
+        } catch {
+          alert("Sign out could not clear this device's account. Please try again.");
+        }
       },
     },
   });
