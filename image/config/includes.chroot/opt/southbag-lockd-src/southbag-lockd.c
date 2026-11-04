@@ -35,15 +35,22 @@
 
 #define MAXPW 128
 
+struct output;
+struct buftag {
+	struct output *o;
+	int idx;
+};
+
 struct output {
 	struct wl_output *output;
 	uint32_t reg_name;
 	struct wl_surface *surface;
 	struct ext_session_lock_surface_v1 *lock_surface;
-	struct wl_buffer *buffer;
-	uint32_t *pixels;
-	int w, h, configured;
-	int busy, dirty;
+	struct wl_buffer *buffers[2];
+	uint32_t *pixels[2];
+	int busy[2];
+	int w, h, configured, dirty;
+	struct buftag tags[2];
 	struct output *next;
 };
 
@@ -93,9 +100,9 @@ static int totp_pending(void) {
 
 static void frame(struct output *o);
 
-static void paint(struct output *o) {
+static void paint(struct output *o, int idx) {
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
-		(unsigned char *)o->pixels, CAIRO_FORMAT_ARGB32, o->w, o->h, o->w * 4);
+		(unsigned char *)o->pixels[idx], CAIRO_FORMAT_ARGB32, o->w, o->h, o->w * 4);
 	cairo_t *cr = cairo_create(cs);
 	cairo_set_source_rgb(cr, 0.020, 0.024, 0.031);
 	cairo_paint(cr);
@@ -146,30 +153,39 @@ static void paint(struct output *o) {
 	cairo_surface_destroy(cs);
 }
 
-/* One shm buffer per output: never paint a buffer the compositor may still
- * be scanning out. A draw request while the buffer is busy only marks the
- * frame dirty; the wl_buffer release event paints and commits then. */
+/* A compositor may retain the current buffer until a replacement is
+ * attached. Use two buffers so redraws do not wait on that buffer's release.
+ * Never repaint a busy buffer; if both are busy, coalesce redraws until a
+ * release arrives. */
+
 static void frame(struct output *o) {
-	if (!o->pixels || !o->configured)
+	if (!o->configured || !o->pixels[0])
 		return;
-	if (o->busy) {
+	int idx = -1;
+	for (int i = 0; i < 2; i++) {
+		if (o->pixels[i] && !o->busy[i]) {
+			idx = i;
+			break;
+		}
+	}
+	if (idx < 0) {
 		o->dirty = 1;
 		return;
 	}
-	paint(o);
-	wl_surface_attach(o->surface, o->buffer, 0, 0);
+	paint(o, idx);
+	wl_surface_attach(o->surface, o->buffers[idx], 0, 0);
 	wl_surface_damage(o->surface, 0, 0, o->w, o->h);
 	wl_surface_commit(o->surface);
-	o->busy = 1;
+	o->busy[idx] = 1;
 	o->dirty = 0;
 }
 
 static void buffer_release(void *data, struct wl_buffer *buffer) {
-	struct output *o = data;
+	struct buftag *tag = data;
 	(void)buffer;
-	o->busy = 0;
-	if (o->dirty)
-		frame(o);
+	tag->o->busy[tag->idx] = 0;
+	if (tag->o->dirty)
+		frame(tag->o);
 }
 
 static const struct wl_buffer_listener buffer_listener = {
@@ -181,34 +197,42 @@ static void draw_all(void) {
 		frame(o);
 }
 
-static int make_buffer(struct output *o, int w, int h) {
+static int make_buffers(struct output *o, int w, int h) {
 	int stride = w * 4, size = stride * h;
 	char name[] = "/southbag-lockd-XXXXXX";
 	int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (fd < 0)
 		return -1;
 	shm_unlink(name);
-	if (ftruncate(fd, size) < 0) { close(fd); return -1; }
-	void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (ftruncate(fd, 2 * size) < 0) { close(fd); return -1; }
+	void *data = mmap(NULL, 2 * size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (data == MAP_FAILED) { close(fd); return -1; }
-	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
-	o->buffer = wl_shm_pool_create_buffer(pool, 0, w, h, stride, WL_SHM_FORMAT_XRGB8888);
-	wl_buffer_add_listener(o->buffer, &buffer_listener, o);
-	o->busy = 0;
+	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 2 * size);
+	for (int i = 0; i < 2; i++) {
+		o->buffers[i] = wl_shm_pool_create_buffer(pool, i * size, w, h, stride,
+			WL_SHM_FORMAT_XRGB8888);
+		o->tags[i].o = o;
+		o->tags[i].idx = i;
+		wl_buffer_add_listener(o->buffers[i], &buffer_listener, &o->tags[i]);
+		o->pixels[i] = (uint32_t *)((char *)data + i * size);
+		o->busy[i] = 0;
+	}
 	o->dirty = 0;
 	wl_shm_pool_destroy(pool);
 	close(fd);
-	free(o->pixels);
-	o->pixels = data;
 	o->w = w; o->h = h;
 	return 0;
 }
 
-static void free_buffer(struct output *o) {
-	if (o->buffer) wl_buffer_destroy(o->buffer);
-	o->buffer = NULL;
-	if (o->pixels) munmap(o->pixels, o->w * o->h * 4);
-	o->pixels = NULL;
+static void free_buffers(struct output *o) {
+	for (int i = 0; i < 2; i++) {
+		if (o->buffers[i]) wl_buffer_destroy(o->buffers[i]);
+		o->buffers[i] = NULL;
+		o->busy[i] = 0;
+	}
+	if (o->pixels[0])
+		munmap(o->pixels[0], 2 * o->w * o->h * 4);
+	o->pixels[0] = o->pixels[1] = NULL;
 }
 
 /* --- session lock surface ------------------------------------------- */
@@ -218,9 +242,9 @@ static void lsurface_configure(void *data, struct ext_session_lock_surface_v1 *s
 	struct output *o = data;
 	ext_session_lock_surface_v1_ack_configure(s, serial);
 	if (w == 0 || h == 0) { w = 1024; h = 768; }
-	if (!o->pixels || o->w != (int)w || o->h != (int)h) {
-		free_buffer(o);
-		if (make_buffer(o, w, h) < 0)
+	if (!o->pixels[0] || o->w != (int)w || o->h != (int)h) {
+		free_buffers(o);
+		if (make_buffers(o, w, h) < 0)
 			return;
 	}
 	o->configured = 1;
@@ -248,7 +272,7 @@ static void drop_surface(struct output *o) {
 	o->lock_surface = NULL;
 	if (o->surface) wl_surface_destroy(o->surface);
 	o->surface = NULL;
-	free_buffer(o);
+	free_buffers(o);
 	o->configured = 0;
 }
 
