@@ -206,7 +206,10 @@ static void add_surface(struct output *o) {
 	o->surface = wl_compositor_create_surface(compositor);
 	o->lock_surface = ext_session_lock_v1_get_lock_surface(lock, o->surface, o->output);
 	ext_session_lock_surface_v1_add_listener(o->lock_surface, &lsurface_listener, o);
-	wl_surface_commit(o->surface);
+	/* No commit here: committing a session lock surface before the first
+	 * configure, with no buffer attached, is a null_buffer protocol error.
+	 * The compositor sends configure on role assignment; the first commit
+	 * happens in the configure handler after ack + attach. */
 }
 
 static void drop_surface(struct output *o) {
