@@ -1,0 +1,31 @@
+#!/bin/sh
+# Pins every backlight the kernel exposes at its maximum brightness.
+#
+# The customer asked for brightness that is always max. There is no
+# brightness control in the shell and no brightness package in the image;
+# this script is the whole feature. It runs as root from the udev rule in
+# /etc/udev/rules.d/90-southbag-brightness.rules whenever a backlight
+# appears or its brightness changes, so a lowered brightness is put back.
+#
+# A device that is already at maximum is left alone, which is also what
+# keeps the udev rule from looping: writing the maximum raises a change
+# event, the script runs again, sees nothing to do, and writes nothing.
+#
+# Only devices the kernel exposes under /sys/class/backlight are touched.
+# A monitor without a backlight device (most external displays) has no
+# brightness to set here.
+set -u
+
+backlight_dir=${SOUTHBAG_BACKLIGHT_DIR:-/sys/class/backlight}
+
+[ -d "$backlight_dir" ] || exit 0
+
+for dev in "$backlight_dir"/*; do
+  [ -e "$dev/brightness" ] || continue
+  max=$(cat "$dev/max_brightness" 2>/dev/null) || continue
+  current=$(cat "$dev/brightness" 2>/dev/null) || continue
+  [ "$current" = "$max" ] && continue
+  echo "$max" > "$dev/brightness" 2>/dev/null || true
+done
+
+exit 0
