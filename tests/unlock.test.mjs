@@ -34,7 +34,7 @@ const server = createServer((req, res) => {
       if (req.url === "/api/auth/sign-in/email") {
         const b = JSON.parse(body);
         if (b.email !== ${JSON.stringify(EMAIL)}) return send(401, { code: "INVALID_EMAIL_OR_PASSWORD" });
-        if (b.password === ${JSON.stringify(PASSWORD)}) {
+        if ([${JSON.stringify(PASSWORD)}, "x".repeat(128), "é".repeat(64), "has\\tcontrol"].includes(b.password)) {
           return send(200, { redirect: false, token: "sess-token", user: { id: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin" } }, { "Set-Cookie": "better-auth.session_token=sess-xyz; Path=/; HttpOnly; SameSite=Lax" });
         }
         if (b.password === "needs-totp") {
@@ -79,9 +79,9 @@ before(async () => {
 
 after(() => { server.kill(); rmSync(runDir, { recursive: true, force: true }); });
 
-function unlock(input) {
+function unlockRaw(input) {
   const r = spawnSync("sh", [HELPER], {
-    input: input + "\n",
+    input,
     env: {
       PATH: process.env.PATH,
       SOUTHBAG_IDENTITY_ORIGIN: origin,
@@ -89,8 +89,12 @@ function unlock(input) {
       SOUTHBAG_STATE_DIR: stateDir,
     },
   });
+  assert.equal(r.stdout.toString(), "", "no secret/helper stdout");
+  assert.equal(r.stderr.toString(), "", "no secret/helper stderr");
   return r.status;
 }
+
+function unlock(input) { return unlockRaw(input + "\n"); }
 
 test("correct password for the signed-in account unlocks", () => {
   writeFileSync(join(stateDir, "locked"), "", { mode: 0o600 }); // locked flag
@@ -197,4 +201,44 @@ test("successful TOTP verify records the enrolled faceId too", () => {
   assert.notEqual(unlock("needs-totp"), 0);
   assert.equal(unlock("123456"), 0);
   assert.equal(readFileSync(join(stateDir, "faceid"), "utf8").trim(), "face-123");
+});
+
+// pam_exec expose_authtok framing is not the native newline framing.
+for (const [name, ending] of [["PAM NUL", "\0"], ["native newline", "\n"], ["EOF", ""]]) {
+  test(`${name} token unlocks without trimming the secret`, () => {
+    assert.equal(unlockRaw(PASSWORD + ending), 0);
+  });
+}
+
+test("bounded token accepts 128 bytes and JSON-encodes control characters", () => {
+  for (const token of ["x".repeat(128), "é".repeat(64), "has\tcontrol"])
+    for (const ending of ["\0", "\n", ""])
+      assert.equal(unlockRaw(token + ending), 0);
+});
+
+test("empty, overlong, multiline and extra NUL tokens fail closed", () => {
+  const bad = ["", "\0", "\n", "x".repeat(129), "x".repeat(129) + "\0",
+    "x".repeat(129) + "\n", "é".repeat(65), PASSWORD + "\nextra",
+    PASSWORD + "\n\n", PASSWORD + "\0extra", PASSWORD + "\0\0",
+    PASSWORD + "\0\n", PASSWORD + "\n\0", "x".repeat(4096)];
+  for (const token of bad) {
+    writeFileSync(join(stateDir, "locked"), "", { mode: 0o600 });
+    assert.equal(unlockRaw(token), 1);
+    assert.ok(existsSync(join(stateDir, "locked")), "bad framing cannot clear lock");
+  }
+});
+
+test("overflow sentinel stops the reader without waiting for unbounded EOF", async () => {
+  const child = spawn("sh", [HELPER], {env: {
+    PATH: process.env.PATH, SOUTHBAG_IDENTITY_ORIGIN: origin,
+    SOUTHBAG_WGET: "wget", SOUTHBAG_STATE_DIR: stateDir,
+  }, stdio: ["pipe", "pipe", "pipe"]});
+  child.stdin.on("error", () => {});
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { child.kill(); reject(new Error("reader waited past bound")); }, 3000);
+    child.once("exit", (code) => { clearTimeout(timer); resolve(code); });
+  });
+  child.stdin.write("x".repeat(130)); // deliberately leave stdin open
+  assert.equal(await done, 1);
+  child.stdin.destroy();
 });
