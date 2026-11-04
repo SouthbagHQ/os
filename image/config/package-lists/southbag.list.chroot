@@ -18,3 +18,20 @@ seatd
 busybox
 
 dbus
+
+# Session lock: ext-session-lock client and the pieces it needs. swaylock is
+# the compositor-enforced lock surface (labwc speaks ext-session-lock); the
+# PAM helper re-auths online against Identity, parsed with jq rather than
+# sed over field order. ca-certificates so its TLS verifies; one small font so the indicator can draw text (recommends are
+# off image-wide, so nothing else pulls one in).
+swaylock
+jq
+ca-certificates
+fonts-dejavu-core
+
+# Native lock client (southbag-lockd, built by the 0016 hook, dark behind
+# /etc/southbag-lockd until proven on-device): cairo to draw the lock
+# surface, libjpeg for the camera capture's YUYV fallback. libcairo2 comes
+# with labwc already; named here so it cannot silently drop out.
+libcairo2
+libjpeg62-turbo

@@ -1,0 +1,22 @@
+[Unit]
+Description=Lock console accounts that are not the customer
+# live-config creates the default live "user" account (with its known
+# default password) at boot, and a login prompt for it appears on any other
+# console (VT gettys, the serial console from console=ttyS0). A lock screen
+# that can be sidestepped by logging in as a second account is not a lock.
+# Runs after live-config has made the account, before any login prompt can
+# be answered.
+DefaultDependencies=no
+After=local-fs.target live-config.service
+Before=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The customer account is created --disabled-password at build time; this
+# covers what live-config adds at runtime. Root is locked on stock Debian
+# already; locking it here too keeps that true under image changes.
+ExecStart=/bin/sh -c '/usr/bin/passwd -l user 2>/dev/null || true; /usr/bin/passwd -l root 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
