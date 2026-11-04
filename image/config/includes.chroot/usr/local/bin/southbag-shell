@@ -11,6 +11,13 @@ set -eu
 # and fonts and fetches fail there.
 /bin/busybox httpd -p 127.0.0.1:8080 -h /usr/share/southbag-shell
 
+# If the previous session or boot ended while locked (compositor crash;
+# SAK is disabled image-wide), come back locked - never back to an exposed
+# desktop. The lock surface goes up before the shell does.
+if [ -e "${HOME:-/home/customer}/.local/share/southbag/locked" ]; then
+ /usr/local/bin/southbag-lock &
+fi
+
 exec /usr/bin/cog \
   --gapplication-app-id=cc.southbag.shell \
   --platform=wl \
