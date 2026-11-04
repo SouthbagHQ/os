@@ -3,17 +3,15 @@
 </script>
 
 <div class="screen">
-  <p class="mark">Southbag</p>
   <div class="card">
-    <h1>This device belongs to a Southbag account.</h1>
+    <h1>Welcome to SouthbagOS</h1>
     <p class="note">
-      Sign in with Southbag Identity&trade;. You will be sent to
-      identity.southbag.cc and brought back.
+      Kevin is watching
     </p>
     {#if error}
       <p class="error" role="alert">{error}</p>
     {/if}
-    <button class="signin" onclick={onsignin}>Sign in with Southbag ID&trade;</button>
+    <button class="signin" onclick={onsignin}>Log in with your Southbag account</button>
   </div>
 </div>
 
@@ -28,16 +26,8 @@
     background: var(--sb-bg);
   }
 
-  .mark {
-    margin: 0;
-    font-family: var(--font-display);
-    font-weight: 300;
-    font-size: 38px;
-    color: var(--sb-heading);
-  }
-
   .card {
-    width: 340px;
+    width: min(420px, calc(100vw - 40px));
     display: flex;
     flex-direction: column;
     gap: 14px;
