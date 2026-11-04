@@ -76,6 +76,20 @@ save_challenge_cookie() {
  [ -s "$jar" ] || rm -f "$jar"
 }
 
+# record_faceid: a successful verify just issued this account's own session
+# cookie in $hdrs. Spend it once, server-side, to learn the account's
+# enrolled Southbag ID faceId (if any) so face unlock can be offered from
+# the next lock on. The cookie is never logged or persisted; the faceId
+# alone cannot unlock anything without the enrolled person's face.
+record_faceid() {
+ sc=$(sed -n 's/\r$//; s/^  [Ss]et-[Cc]ookie: \([^; ]*\);.*/\1/p' "$hdrs" | paste -sd '; ' 2>/dev/null)
+ [ -n "$sc" ] || return 0
+ if $wgetbin -q -T 8 -O "$resp" --header "Cookie: $sc" "$origin/api/auth/southbag-id/credential" 2>/dev/null; then
+  fid=$(jq -r 'if .enrolled == true then .faceId // empty else empty end' "$resp" 2>/dev/null)
+  if [ -n "$fid" ]; then printf '%s\n' "$fid" > "$state/faceid"; else rm -f "$state/faceid"; fi
+ fi
+}
+
 cookie=""
 if [ -r "$jar" ]; then
  cookie=$(paste -sd '; ' "$jar" 2>/dev/null)
@@ -85,6 +99,7 @@ fi
 if [ -n "$cookie" ] && printf '%s' "$input" | grep -qE '^[0-9]{6}$'; then
  printf '{"code":"%s"}' "$input" > "$req"
  if post /two-factor/verify-totp && answered_for_us; then
+  record_faceid
   rm -f "$jar" "$state/locked"
   exit 0
  fi
@@ -94,6 +109,7 @@ fi
 printf '{"email":"%s","password":"%s"}' "$email" \
  "$(printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g')" > "$req"
 if post /sign-in/email && answered_for_us; then
+ record_faceid
  rm -f "$jar" "$state/locked"
  exit 0
 fi
