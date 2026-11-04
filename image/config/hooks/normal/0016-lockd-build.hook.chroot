@@ -25,7 +25,7 @@ wayland-scanner private-code \
  /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
  /tmp/ext-session-lock-v1.c
 
-gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-lockd \
+gcc -O2 -Wall -Wextra -I/tmp -o /usr/local/bin/southbag-lockd \
  southbag-lockd.c /tmp/ext-session-lock-v1.c \
  $(pkg-config --cflags --libs wayland-client cairo xkbcommon)
 gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-face-capture \
