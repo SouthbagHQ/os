@@ -1,0 +1,31 @@
+#!/bin/sh
+# No local file storage: the customer's home and /tmp live in RAM.
+#
+# The live system is already immutable - a read-only squashfs under a
+# writable overlay that dies with the power. This hook extends the same
+# rule to a copy installed on disk: /home/customer and /tmp are tmpfs, so
+# an installed machine forgets its session exactly like a live one, and
+# files only ever persist in Southbag Drive.
+set -eu
+
+uid="$(id -u customer)"
+gid="$(id -g customer)"
+
+# Generated here rather than shipped as an include: the mount must name
+# the customer's real uid, and only this build knows it.
+cat > /etc/systemd/system/home-customer.mount <<UNIT
+[Unit]
+Description=Customer home in RAM (no local file storage)
+
+[Mount]
+What=tmpfs
+Where=/home/customer
+Type=tmpfs
+Options=mode=0700,uid=$uid,gid=$gid,nosuid,nodev
+
+[Install]
+WantedBy=local-fs.target
+UNIT
+
+systemctl enable home-customer.mount
+systemctl enable tmp.mount
