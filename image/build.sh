@@ -43,7 +43,9 @@ hook="$here/config/hooks/normal/0025-southbag-browser.hook.chroot"
 # Same story for the lock helpers shipped via includes.chroot: web flows
 # land files as 644 and the lock is useless if these are not executable.
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-lock" \
-  "$here/config/includes.chroot/usr/local/bin/southbag-unlock"
+  "$here/config/includes.chroot/usr/local/bin/southbag-unlock" \
+  "$here/config/includes.chroot/usr/local/bin/southbag-face-unlock"
+chmod +x "$here/config/hooks/normal/0016-lockd-build.hook.chroot" 2>/dev/null || true
 
 # Hand the browser pin to the chroot hook (or remove a stale one).
 pin="$here/config/includes.chroot/etc/default/southbag-browser"
