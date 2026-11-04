@@ -1,12 +1,16 @@
 <script lang="ts">
   import { APPS } from "../../apps/registry";
 
-  let { open, onopen, onclose, onsignout }: {
+  let { open, onopen, onclose, onlock, onsignout }: {
     open: boolean;
     onopen: (appId: string) => void;
     onclose: () => void;
+    onlock: () => void;
     onsignout: () => void;
   } = $props();
+
+  // The lock is the compositor's, so it only exists on the device.
+  const onDevice = import.meta.env.MODE === "device";
 
   let panel = $state<HTMLElement | null>(null);
 
@@ -33,6 +37,11 @@
         </li>
       {/each}
       <li class="divider" aria-hidden="true"></li>
+      {#if onDevice}
+        <li>
+          <button class="lock" onclick={onlock}>Lock</button>
+        </li>
+      {/if}
       <li>
         <button class="signout" onclick={onsignout}>Sign out</button>
       </li>
@@ -89,6 +98,7 @@
     color: var(--sb-heading);
   }
 
+  .lock,
   .signout {
     color: var(--sb-text-dim);
   }
