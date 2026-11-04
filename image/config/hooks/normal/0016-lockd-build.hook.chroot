@@ -1,0 +1,40 @@
+#!/bin/sh
+# Builds the native lock client and its camera helper inside the chroot,
+# then removes the toolchain and the sources: the image ships the two
+# binaries, not a compiler. Dev packages are installed for this hook and
+# purged before it exits, so they never reach the squashfs.
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+# Runtime libraries the client links against must survive the purge below:
+# mark them manual before the dev packages pull anything in, so autoremove
+# can never take a lib the binaries need. (Most arrive via labwc and the
+# package list anyway; this is belt and braces.)
+apt-mark manual libwayland-client0 libcairo2 libxkbcommon0 \
+ libjpeg62-turbo libfontconfig1 libpixman-1-0 2>/dev/null || true
+apt-get install -y --no-install-recommends \
+ build-essential pkg-config libwayland-dev wayland-protocols \
+ libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+
+cd /opt/southbag-lockd-src
+wayland-scanner client-header \
+ /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
+ /tmp/ext-session-lock-v1.h
+wayland-scanner private-code \
+ /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
+ /tmp/ext-session-lock-v1.c
+
+gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-lockd \
+ southbag-lockd.c /tmp/ext-session-lock-v1.c \
+ $(pkg-config --cflags --libs wayland-client cairo xkbcommon)
+gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-face-capture \
+ southbag-face-capture.c -ljpeg
+chmod 755 /usr/local/bin/southbag-lockd /usr/local/bin/southbag-face-capture
+
+cd /
+rm -rf /opt/southbag-lockd-src /tmp/ext-session-lock-v1.c /tmp/ext-session-lock-v1.h
+apt-get purge -y build-essential pkg-config libwayland-dev wayland-protocols \
+ libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+apt-get autoremove -y --purge
+apt-get clean
