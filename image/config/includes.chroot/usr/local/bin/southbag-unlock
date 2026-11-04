@@ -1,7 +1,7 @@
 #!/bin/sh
 # PAM auth helper for the session lock (see /etc/pam.d/swaylock).
 #
-# Reads one line on stdin (pam_exec expose_authtok): the typed Southbag
+# Reads one bounded token on stdin (pam_exec expose_authtok): the typed Southbag
 # password, or a 6-digit TOTP while a two-factor challenge is pending.
 # Verifies it ONLINE against Southbag Identity and only accepts when the
 # returned user id is exactly the account this device is signed in to
@@ -42,8 +42,20 @@ sub=$(cut -f1 "$acct" 2>/dev/null)
 email=$(cut -f2 "$acct" 2>/dev/null)
 [ -n "${sub:-}" ] && [ -n "${email:-}" ] || exit 1
 
-IFS= read -r input || exit 1
-[ -n "$input" ] || exit 1
+# pam_exec writes a NUL-terminated token; the native client writes a line.
+# EOF without a delimiter is also valid. Read at most MAXPW (128 bytes),
+# one optional delimiter, plus one overflow sentinel. Never silently accept
+# a truncated prefix or a second line/token. jq handles NUL before the shell
+# can discard it; only a validated NUL-free value enters the shell variable.
+# The nonsecret suffix preserves trailing NULs with jq 1.6 raw-slurp, which
+# otherwise drops them before filtering. Remove exactly that suffix first.
+input=$({ dd bs=1 count=130 2>/dev/null; printf '.'; } | jq -Rser '
+ .[0:-1] |
+ if endswith("\u0000") or endswith("\n") then .[0:-1] else . end |
+ if utf8bytelength > 0 and utf8bytelength <= 128
+    and (explode | index(0) | not) and (contains("\n") | not)
+ then . else error("invalid token framing") end
+' 2>/dev/null) || exit 1
 
 # post PATH: body file $req must already be filled. Body to $resp, headers
 # (incl. status line) to $hdrs. 8s cap so a dead network fails closed fast
@@ -106,8 +118,10 @@ if [ -n "$cookie" ] && printf '%s' "$input" | grep -qE '^[0-9]{6}$'; then
  # A wrong code falls through and is also tried as a password below.
 fi
 
-printf '{"email":"%s","password":"%s"}' "$email" \
- "$(printf '%s' "$input" | sed 's/\\/\\\\/g; s/"/\\"/g')" > "$req"
+# JSON encode through stdin, including tabs/control characters; no secret
+# is passed as a jq argument or emitted to stdout/stderr.
+printf '%s' "$input" | jq -Rs --arg email "$email" \
+ '{email: $email, password: .}' > "$req" || exit 1
 if post /sign-in/email && answered_for_us; then
  record_faceid
  rm -f "$jar" "$state/locked"
