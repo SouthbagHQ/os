@@ -1,0 +1,56 @@
+#!/bin/sh
+# Face unlock for the session lock.
+#
+# Usage: southbag-face-unlock PHOTO.JPG - the caller (the lock client) has
+# just captured a fresh frame from the camera into a 0600 tmpfs file.
+# We post the account's recorded Southbag ID faceId (written by
+# southbag-unlock after a verified password/TOTP sign-in, from Identity's
+# own credential endpoint - never caller-claimed) plus that photo to
+# sign-in/southbag-id and accept only when the returned user id is exactly
+# the account this device is signed in to.
+#
+# This is a photo match against the enrolled photo - spoofable by design
+# (accepted by the account owner); it is not liveness or trusted biometrics.
+# Fail closed on everything: no enrolment, oversized/odd photo, 4xx/5xx,
+# network error, mismatch, malformed JSON. Offline stays locked. The photo
+# and the response headers (which carry a session cookie on success) are
+# 0600 tmpfs files deleted on exit; nothing secret touches argv or logs.
+set -u
+state="${SOUTHBAG_STATE_DIR:-${HOME:-/home/customer}/.local/share/southbag}"
+origin="${SOUTHBAG_IDENTITY_ORIGIN:-https://id.southbag.com}"
+wgetbin="${SOUTHBAG_WGET:-wget}"
+acct="$state/account"
+fid_file="$state/faceid"
+req="$state/.freq.$$"
+resp="$state/.fresp.$$"
+hdrs="$state/.fhdrs.$$"
+trap 'rm -f "$req" "$resp" "$hdrs" "${1:-}"' EXIT
+umask 077
+
+photo="${1:-}"
+[ -n "$photo" ] && [ -r "$photo" ] || exit 1
+[ -r "$acct" ] && [ -r "$fid_file" ] || exit 1
+sub=$(cut -f1 "$acct" 2>/dev/null)
+fid=$(head -c 128 "$fid_file" | tr -d '\r\n' )
+[ -n "${sub:-}" ] && [ -n "$fid" ] || exit 1
+# Identity refuses photos over 900KB; fail closed rather than retry.
+size=$(wc -c < "$photo" 2>/dev/null)
+[ -n "$size" ] && [ "$size" -gt 32 ] && [ "$size" -lt 800000 ] || exit 1
+
+b64=$(base64 "$photo" 2>/dev/null | tr -d '\n')
+[ -n "$b64" ] || exit 1
+jq -n --arg fid "$fid" --arg p "data:image/jpeg;base64,$b64" \
+ '{faceId:$fid, photo:$p}' > "$req" || exit 1
+
+if $wgetbin -q -S -T 10 -O "$resp" \
+  --post-file "$req" \
+  --header "Content-Type: application/json" \
+  "$origin/api/auth/sign-in/southbag-id" > /dev/null 2>"$hdrs" \
+ && grep -q '^  HTTP/1\.[01] 200' "$hdrs"; then
+ uid=$(jq -r '.user.id // empty' "$resp" 2>/dev/null)
+ if [ -n "$uid" ] && [ "$uid" = "$sub" ]; then
+  rm -f "$state/locked"
+  exit 0
+ fi
+fi
+exit 1
