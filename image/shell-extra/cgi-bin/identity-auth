@@ -1,0 +1,56 @@
+#!/bin/sh
+# Speaks to Southbag Identity on the device's behalf.
+#
+# The shell runs from http://127.0.0.1:8080, an origin Identity does not CORS
+# trust, so the page alone cannot register a client, exchange an
+# authorization code, or read the signing keys. This script forwards exactly
+# those three calls — a fixed allowlist, not a general proxy — to
+# https://identity.southbag.cc and returns the answer.
+#
+# Threat model: the httpd listens on loopback only, so every caller is
+# already a process running as the customer on this device — which could
+# reach Identity directly without this script. The proxy holds no credentials
+# and adds no authority; it exists because browsers enforce CORS and local
+# processes do not. The PKCE verifier is generated in the page and only
+# passes through here on its way to Identity; an attacker with local code
+# execution already owns the session either way. Bodies are never logged.
+set -eu
+
+ep=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^ep=\([a-z]*\)$/\1/p')
+
+path=""
+case "$ep" in
+  register) path="/api/auth/oauth2/register" ;;
+  token)    path="/api/auth/oauth2/token" ;;
+  jwks)     path="/api/auth/jwks" ;;
+  *)
+    printf 'Status: 400\r\nContent-Type: text/plain\r\n\r\nunknown endpoint\r\n'
+    exit 0
+    ;;
+esac
+
+fail() {
+  printf 'Status: %s\r\nContent-Type: text/plain\r\n\r\n%s\r\n' "$1" "$2"
+  exit 0
+}
+
+method="${REQUEST_METHOD:-GET}"
+if [ "$ep" = "jwks" ]; then
+  [ "$method" = "GET" ] || fail 405 "method not allowed"
+  out=$(busybox wget -q -O - "https://identity.southbag.cc$path" 2>/dev/null) \
+    || fail 502 "identity unreachable"
+else
+  [ "$method" = "POST" ] || fail 405 "method not allowed"
+  len="${CONTENT_LENGTH:-0}"
+  [ "$len" -gt 0 ] && [ "$len" -lt 16384 ] || fail 400 "bad request body"
+  body=$(dd bs=1 count="$len" 2>/dev/null)
+  # A 4xx from Identity loses its body here (busybox wget); the page reports
+  # the status, not the detail, on this path.
+  out=$(busybox wget -q -O - \
+    --post-data "$body" \
+    --header "Content-Type: ${CONTENT_TYPE:-application/json}" \
+    "https://identity.southbag.cc$path" 2>/dev/null) \
+    || fail 502 "identity refused"
+fi
+
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n%s' "$out"
