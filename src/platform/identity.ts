@@ -40,26 +40,33 @@ const onDevice = import.meta.env.MODE === "device";
  * Fire-and-forget: if the note does not land, the lock simply refuses to
  * engage rather than locking for the wrong account.
  */
+let accountUpdate: Promise<void> = Promise.resolve();
+
 function recordAccount(accessToken: string): void {
   if (!onDevice) return;
-  void fetch("/cgi-bin/account", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accessToken }),
-  }).catch(() => {
-    /* Lock stays unavailable until the note lands. */
+  accountUpdate = accountUpdate.catch(() => {}).then(async () => {
+    const response = await fetch("/cgi-bin/account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken }),
+    });
+    if (!response.ok) throw new Error("Account binding failed");
   });
+  // Keep rejection handled until logout joins this operation.
+  void accountUpdate.catch(() => {});
 }
 
-function clearAccount(): void {
+async function clearAccount(): Promise<void> {
   if (!onDevice) return;
-  void fetch("/cgi-bin/account", {
+  // A late login write must not recreate the note after logout clears it.
+  await accountUpdate.catch(() => {});
+  const response = await fetch("/cgi-bin/account", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ clear: true }),
-  }).catch(() => {
-    /* The note dies with the device's tmpfs regardless. */
+    keepalive: true,
   });
+  if (!response.ok) throw new Error("Account cleanup failed. Please try signing out again.");
 }
 
 export function currentSession(): Session | null {
@@ -92,14 +99,12 @@ export function storeSession(session: Session): void {
  * The token is short-lived and bearer; forgetting it is the honest version of
  * logging out that a secretless client can do.
  */
-export function logout(): void {
-  try {
-    localStorage.removeItem(SESSION_KEY);
-    sessionStorage.removeItem("southbag.identity.pending");
-    clearAccount();
-  } catch {
-    /* Nothing to forget. */
-  }
+export async function logout(): Promise<void> {
+  // Do not reload or forget the UI session until the binding is removed.
+  // On failure the caller keeps the desktop open so cleanup can be retried.
+  await clearAccount();
+  localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem("southbag.identity.pending");
 }
 
 export function firstName(customer: Customer): string {
