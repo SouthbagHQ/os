@@ -1,0 +1,17 @@
+# The Southbag door. Look only; behavior lives in the PAM stack and
+# southbag-unlock. Colors are RRGGBB(AA), matching the shell's dark room.
+color=050608
+indicator-radius=90
+indicator-thickness=6
+ring-color=3a3f4a
+ring-ver-color=3a3f4a
+ring-wrong-color=b0433a
+key-hl-color=8b93a7
+bs-hl-color=b0433a
+inside-color=050608
+inside-ver-color=050608
+inside-wrong-color=050608
+line-color=050608
+separator-color=050608
+text-color=e8e6df
+font=DejaVu Sans
