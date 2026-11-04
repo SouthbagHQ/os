@@ -63,10 +63,14 @@ for candidate in southbag-browser /usr/bin/southbag-browser /usr/local/bin/south
 done
 
 if [ -n "$southbag_browser" ]; then
+  # SOUTHBAG_OS marks every process the OS launches: under it the browser
+  # refuses downloads, because the customer has no local file storage -
+  # files live in Southbag Drive. cog needs no mark; it cannot download
+  # at all.
   if [ "$app" = "browser" ]; then
-    "$southbag_browser" >/dev/null 2>&1 &
+    SOUTHBAG_OS=1 "$southbag_browser" >/dev/null 2>&1 &
   elif [ -n "$svc" ]; then
-    "$southbag_browser" --app="$svc" >/dev/null 2>&1 &
+    SOUTHBAG_OS=1 "$southbag_browser" --app="$svc" >/dev/null 2>&1 &
   else
     # Built-in apps (terminal, kevin, settings) stay on cog below.
     southbag_browser=""
