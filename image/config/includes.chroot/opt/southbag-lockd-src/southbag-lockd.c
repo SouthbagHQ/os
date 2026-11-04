@@ -43,6 +43,7 @@ struct output {
 	struct wl_buffer *buffer;
 	uint32_t *pixels;
 	int w, h, configured;
+	int busy, dirty;
 	struct output *next;
 };
 
@@ -90,9 +91,9 @@ static int totp_pending(void) {
 
 /* --- rendering ------------------------------------------------------ */
 
-static void draw(struct output *o) {
-	if (!o->pixels || !o->configured)
-		return;
+static void frame(struct output *o);
+
+static void paint(struct output *o) {
 	cairo_surface_t *cs = cairo_image_surface_create_for_data(
 		(unsigned char *)o->pixels, CAIRO_FORMAT_ARGB32, o->w, o->h, o->w * 4);
 	cairo_t *cr = cairo_create(cs);
@@ -143,12 +144,41 @@ static void draw(struct output *o) {
 
 	cairo_destroy(cr);
 	cairo_surface_destroy(cs);
-	wl_surface_damage(o->surface, 0, 0, o->w, o->h);
 }
+
+/* One shm buffer per output: never paint a buffer the compositor may still
+ * be scanning out. A draw request while the buffer is busy only marks the
+ * frame dirty; the wl_buffer release event paints and commits then. */
+static void frame(struct output *o) {
+	if (!o->pixels || !o->configured)
+		return;
+	if (o->busy) {
+		o->dirty = 1;
+		return;
+	}
+	paint(o);
+	wl_surface_attach(o->surface, o->buffer, 0, 0);
+	wl_surface_damage(o->surface, 0, 0, o->w, o->h);
+	wl_surface_commit(o->surface);
+	o->busy = 1;
+	o->dirty = 0;
+}
+
+static void buffer_release(void *data, struct wl_buffer *buffer) {
+	struct output *o = data;
+	(void)buffer;
+	o->busy = 0;
+	if (o->dirty)
+		frame(o);
+}
+
+static const struct wl_buffer_listener buffer_listener = {
+	.release = buffer_release,
+};
 
 static void draw_all(void) {
 	for (struct output *o = outputs; o; o = o->next)
-		draw(o);
+		frame(o);
 }
 
 static int make_buffer(struct output *o, int w, int h) {
@@ -163,6 +193,9 @@ static int make_buffer(struct output *o, int w, int h) {
 	if (data == MAP_FAILED) { close(fd); return -1; }
 	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
 	o->buffer = wl_shm_pool_create_buffer(pool, 0, w, h, stride, WL_SHM_FORMAT_XRGB8888);
+	wl_buffer_add_listener(o->buffer, &buffer_listener, o);
+	o->busy = 0;
+	o->dirty = 0;
 	wl_shm_pool_destroy(pool);
 	close(fd);
 	free(o->pixels);
@@ -191,9 +224,7 @@ static void lsurface_configure(void *data, struct ext_session_lock_surface_v1 *s
 			return;
 	}
 	o->configured = 1;
-	draw(o);
-	wl_surface_attach(o->surface, o->buffer, 0, 0);
-	wl_surface_commit(o->surface);
+	frame(o);
 }
 
 static const struct ext_session_lock_surface_v1_listener lsurface_listener = {
