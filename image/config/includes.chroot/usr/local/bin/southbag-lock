@@ -17,6 +17,7 @@ PATH=/usr/local/bin:/usr/bin:/bin; export PATH
 state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
 [ -r "$state/account" ] || exit 1
 pgrep -x swaylock >/dev/null 2>&1 && exit 0
+pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 
 # Flag first: if the compositor dies under the lock, the next session must
 # come up locked again rather than expose the desktop (southbag-shell
@@ -25,5 +26,12 @@ pgrep -x swaylock >/dev/null 2>&1 && exit 0
 # installed system; on a live boot home is ephemeral anyway.
 mkdir -p "$state"
 : > "$state/locked"
+
+# The native client (password + face in one lock surface) replaces swaylock
+# only when deliberately enabled with the /etc/southbag-lockd marker. Until
+# it is proven on a real image, swaylock stays the door.
+if [ -e /etc/southbag-lockd ] && [ -x /usr/local/bin/southbag-lockd ]; then
+ exec /usr/local/bin/southbag-lockd
+fi
 
 exec swaylock
