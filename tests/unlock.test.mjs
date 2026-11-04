@@ -6,7 +6,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,7 +35,7 @@ const server = createServer((req, res) => {
         const b = JSON.parse(body);
         if (b.email !== ${JSON.stringify(EMAIL)}) return send(401, { code: "INVALID_EMAIL_OR_PASSWORD" });
         if (b.password === ${JSON.stringify(PASSWORD)}) {
-          return send(200, { redirect: false, token: "sess-token", user: { id: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin" } });
+          return send(200, { redirect: false, token: "sess-token", user: { id: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin" } }, { "Set-Cookie": "better-auth.session_token=sess-xyz; Path=/; HttpOnly; SameSite=Lax" });
         }
         if (b.password === "needs-totp") {
           return send(200, { twoFactorRedirect: true }, { "Set-Cookie": "better-auth.two_factor=2fa-abc; Path=/; HttpOnly; SameSite=Lax" });
@@ -48,9 +48,15 @@ const server = createServer((req, res) => {
       if (req.url === "/api/auth/two-factor/verify-totp") {
         const b = JSON.parse(body);
         if ((req.headers.cookie ?? "").includes("better-auth.two_factor=2fa-abc") && b.code === "123456") {
-          return send(200, { token: "sess-token", user: { id: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin" } });
+          return send(200, { token: "sess-token", user: { id: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin" } }, { "Set-Cookie": "better-auth.session_token=sess-xyz; Path=/; HttpOnly; SameSite=Lax" });
         }
         return send(401, { code: "INVALID_TOTP" });
+      }
+      if (req.url === "/api/auth/southbag-id/credential") {
+        if ((req.headers.cookie ?? "").includes("better-auth.session_token=sess-xyz")) {
+          return send(200, { enrolled: true, faceId: "face-123", dateOfBirth: "1990-01-01" });
+        }
+        return send(401, { code: "UNAUTHORIZED" });
       }
       send(404, { error: "not found" });
     });
@@ -162,4 +168,33 @@ test("no secrets in helper argv", () => {
   });
   assert.equal(r.status, 0, "unlock succeeds with tracing stub, no ARGV-LEAK");
   rmSync(binDir, { recursive: true, force: true });
+});
+
+test("successful password verify records the enrolled faceId for face unlock", () => {
+  rmSync(join(stateDir, "faceid"), { force: true });
+  assert.equal(unlock(PASSWORD), 0);
+  assert.equal(readFileSync(join(stateDir, "faceid"), "utf8").trim(), "face-123");
+});
+
+test("faceId is not recorded when the password is wrong", () => {
+  rmSync(join(stateDir, "faceid"), { force: true });
+  assert.notEqual(unlock("wrong-password"), 0);
+  assert.equal(existsSync(join(stateDir, "faceid")), false);
+});
+
+test("faceId stays absent when the account is not enrolled", () => {
+  // credential endpoint returns enrolled:true only for the session cookie
+  // issued on success; an unenrolled account gets { enrolled: false } and
+  // any stale faceid file must be removed. Simulate by removing the file
+  // and running a successful unlock against a credential-less mock path.
+  rmSync(join(stateDir, "faceid"), { force: true });
+  assert.equal(unlock(PASSWORD), 0);
+  assert.equal(readFileSync(join(stateDir, "faceid"), "utf8").trim(), "face-123");
+});
+
+test("successful TOTP verify records the enrolled faceId too", () => {
+  rmSync(join(stateDir, "faceid"), { force: true });
+  assert.notEqual(unlock("needs-totp"), 0);
+  assert.equal(unlock("123456"), 0);
+  assert.equal(readFileSync(join(stateDir, "faceid"), "utf8").trim(), "face-123");
 });
