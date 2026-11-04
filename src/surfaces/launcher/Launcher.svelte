@@ -37,10 +37,19 @@
         <button class="signout" onclick={onsignout}>Sign out</button>
       </li>
     </ul>
+    <p class="watching">Kevin is watching. He noticed you opened this.</p>
   </div>
 {/if}
 
 <style>
+  .watching {
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--sb-border);
+    color: var(--sb-text-dim);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
   .scrim {
     position: fixed;
     inset: 0;
