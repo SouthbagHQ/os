@@ -85,7 +85,7 @@ if [ -z "$southbag_browser" ]; then
   # lets the compositor tell the shell and an app apart.
   /usr/bin/cog \
     --gapplication-app-id="cc.southbag.$app" \
-    --platform=wayland \
+    --platform=wl \
     --bg-color=#0c0e13 \
     "$target" >/dev/null 2>&1 &
 fi
