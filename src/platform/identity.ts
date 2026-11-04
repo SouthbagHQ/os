@@ -31,6 +31,37 @@ export interface Session {
 
 const SESSION_KEY = "southbag.session";
 
+const onDevice = import.meta.env.MODE === "device";
+
+/**
+ * Tells the device who is signed in so the session lock can demand that same
+ * account's password. The CGI re-verifies the token with Identity and records
+ * what the server answers - the page's word is never what gets written.
+ * Fire-and-forget: if the note does not land, the lock simply refuses to
+ * engage rather than locking for the wrong account.
+ */
+function recordAccount(accessToken: string): void {
+  if (!onDevice) return;
+  void fetch("/cgi-bin/account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken }),
+  }).catch(() => {
+    /* Lock stays unavailable until the note lands. */
+  });
+}
+
+function clearAccount(): void {
+  if (!onDevice) return;
+  void fetch("/cgi-bin/account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clear: true }),
+  }).catch(() => {
+    /* The note dies with the device's tmpfs regardless. */
+  });
+}
+
 export function currentSession(): Session | null {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
@@ -49,6 +80,7 @@ export function currentSession(): Session | null {
 export function storeSession(session: Session): void {
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    recordAccount(session.accessToken);
   } catch {
     /* A device with no writable storage cannot stay signed in. */
   }
@@ -64,6 +96,7 @@ export function logout(): void {
   try {
     localStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem("southbag.identity.pending");
+    clearAccount();
   } catch {
     /* Nothing to forget. */
   }
