@@ -26,15 +26,29 @@ committed at
 referenced with `Signed-By`. apt refuses anything not signed by it
 ([apt-secure(8)](https://manpages.debian.org/trixie/apt/apt-secure.8.en.html)).
 
+## CI proof
+
+`.github/workflows/packages.yml` runs on every pull request (no secrets, no
+signing, no deploy) and builds and structurally validates the packages. The
+lockd sources are not on this branch yet, so for the compile test only the
+workflow fetches them read-only from the `agent/session-lock` branch at
+pinned commit `7e7803ca535b3107520ae1aee00c50f83f56598d`; nothing is merged,
+committed or deployed, and the job fails rather than passing silently if the
+sources cannot be fetched. Once the session-lock PR lands, the workflow
+builds from the checked-out tree instead.
+
 ## Staged, fail-closed activation
 
 The channel is inert until a one-time signing setup happens:
 
 - Hook `0026-southbag-updates.hook.chroot` checks for the keyring at image
-  build time. **Absent:** the sources entry is removed and the image builds
-  and runs exactly as before, minus the channel; nothing about the default
-  image changes and main's CI cannot break over this. **Present:** the
-  channel is enabled.
+  build time. **Absent:** the sources entry is removed and main's CI cannot
+  break over the channel. **Present:** the channel is enabled. Only the
+  Southbag channel is staged: every image - keyed or not - installs
+  `unattended-upgrades` and the `51southbag-updates` config, so Debian
+  security auto-updates and the 03:30 auto-restart window are active from
+  first boot. That is the requested auto-update/auto-restart behavior; it
+  needs no signing setup and it is a real change to the default image.
 - Until `SOUTHBAG_APT_SIGNING_KEY` exists as a repo secret, the pages
   workflow deploys the site without `/apt/` (with a warning) - the site
   deploy never fails over the missing repo.
