@@ -61,17 +61,19 @@ jobs:
         run: |
           bun run build:device
           mkdir -p out/pool dist/apt
-          ./packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
-          ./packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
+          # bash invocation, not ./: file modes are not
+          # guaranteed to survive publication.
+          bash packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          bash packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
           # lockd lands on its own branch; package it once its sources are
           # in the tree. The script no-ops cleanly until then.
           if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq --no-install-recommends               build-essential pkg-config libwayland-dev wayland-protocols               libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
           fi
-          ./packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
-          ./packaging/build-repo.sh out/pool dist/apt
-          ./packaging/verify-repo.sh dist/apt
+          bash packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
+          bash packaging/build-repo.sh out/pool dist/apt
+          bash packaging/verify-repo.sh dist/apt
           rm -rf out/pool
 
       - uses: actions/configure-pages@v5
