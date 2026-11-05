@@ -14,6 +14,13 @@ if [[ ! -d "$repo/dist-device" ]]; then
   exit 1
 fi
 
+# Set to a Southbag Browser release tag to include the standalone browser in
+# the image (website apps then open as its app windows; see
+# config/hooks/normal/0025-southbag-browser.hook.chroot). Must be a release
+# that contains app windows — v1.0.0 predates them. Empty keeps the image
+# cog-only.
+SOUTHBAG_BROWSER_VERSION=""
+
 # The shell is ordinary files on disk, served over loopback at boot. This
 # directory is generated, so anything hand-written that belongs beside the
 # bundle — the launcher CGI — is kept in shell-extra and copied in after.
@@ -22,7 +29,23 @@ rm -rf "$served"
 mkdir -p "$served"
 cp -R "$repo/dist-device/." "$served/"
 cp -R "$here/shell-extra/." "$served/"
-chmod +x "$served/cgi-bin/launch"
+# Executable bits, set explicitly rather than trusted to the checkout: the
+# device runs these as CGI, and git modes survive neither every checkout nor
+# every web flow that can land these files.
+chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth"
+
+# live-build executes hooks straight from this tree, so the browser hook's
+# executable bit matters here too — set it, don't trust the checkout.
+hook="$here/config/hooks/normal/0025-southbag-browser.hook.chroot"
+[[ -f "$hook" ]] && chmod +x "$hook"
+
+# Hand the browser pin to the chroot hook (or remove a stale one).
+pin="$here/config/includes.chroot/etc/default/southbag-browser"
+rm -f "$pin"
+if [[ -n "$SOUTHBAG_BROWSER_VERSION" ]]; then
+  mkdir -p "$(dirname "$pin")"
+  printf '%s' "$SOUTHBAG_BROWSER_VERSION" > "$pin"
+fi
 
 docker run --rm --privileged \
   -v "$here:/image" -w /image \

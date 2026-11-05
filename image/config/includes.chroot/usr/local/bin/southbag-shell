@@ -13,6 +13,6 @@ set -eu
 
 exec /usr/bin/cog \
   --gapplication-app-id=cc.southbag.shell \
-  --platform=wayland \
+  --platform=wl \
   --bg-color=#050608 \
   http://127.0.0.1:8080/

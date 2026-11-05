@@ -1,10 +1,11 @@
 <script lang="ts">
   import { APPS } from "../../apps/registry";
 
-  let { open, onopen, onclose }: {
+  let { open, onopen, onclose, onsignout }: {
     open: boolean;
     onopen: (appId: string) => void;
     onclose: () => void;
+    onsignout: () => void;
   } = $props();
 
   let panel = $state<HTMLElement | null>(null);
@@ -31,11 +32,24 @@
           <button onclick={() => onopen(app.id)}>{app.name}</button>
         </li>
       {/each}
+      <li class="divider" aria-hidden="true"></li>
+      <li>
+        <button class="signout" onclick={onsignout}>Sign out</button>
+      </li>
     </ul>
+    <p class="watching">Kevin is watching. He noticed you opened this.</p>
   </div>
 {/if}
 
 <style>
+  .watching {
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--sb-border);
+    color: var(--sb-text-dim);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
   .scrim {
     position: fixed;
     inset: 0;
@@ -60,6 +74,11 @@
     padding: 0;
   }
 
+  .divider {
+    margin: 6px 0;
+    border-top: 1px solid var(--sb-border);
+  }
+
   button {
     appearance: none;
     display: block;
@@ -77,5 +96,9 @@
   button:hover {
     background: var(--sb-card-hover);
     color: var(--sb-heading);
+  }
+
+  .signout {
+    color: var(--sb-text-dim);
   }
 </style>

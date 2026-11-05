@@ -10,7 +10,7 @@
   import { sequence } from "./surfaces/boot/sequence.svelte";
   import type { Customer } from "./platform/identity";
 
-  let { customer }: { customer: Customer } = $props();
+  let { customer, onsignout }: { customer: Customer; onsignout: () => void } = $props();
 
   // On the device the compositor owns windows, so opening an app starts a
   // process rather than drawing a frame. In a browser there is no compositor,
@@ -23,6 +23,15 @@
   function openApp(id: string) {
     const app = appById(id);
     if (!app) return;
+    // Services and the Browser are top-level windows, not frames: off the
+    // device that is a new browser window, on the device the session starts
+    // a cog process (which the launcher routes the same way).
+    if (!onDevice && (app.url || app.id === "browser")) {
+      const go = app.url ? `&go=${encodeURIComponent(app.url)}` : "";
+      window.open(`${import.meta.env.BASE_URL}?app=browser${go}`, "_blank", "noopener");
+      launcherOpen = false;
+      return;
+    }
     host.open(id, { title: app.name, size: app.size, min: app.min });
     launcherOpen = false;
   }
@@ -52,5 +61,6 @@
   open={launcherOpen}
   onopen={openApp}
   onclose={() => (launcherOpen = false)}
+  {onsignout}
 />
 <Boot {customer} />
