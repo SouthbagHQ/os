@@ -1,0 +1,87 @@
+name: packages
+
+# Native compile and packaging proof for the update channel on pull
+# requests - no secrets, no signing, no deploy. The pages workflow owns
+# signing and publishing on main; this one only proves the packages build.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build:device
+
+      # The lockd sources live on the session-lock branch until that PR
+      # lands. For the compile proof ONLY - nothing is merged, committed or
+      # deployed - fetch them read-only at this PINNED commit when the
+      # checked-out branch does not carry them, so the packaging is always
+      # tested against the real sources. Fail-closed: if the fetch fails or
+      # any required path is missing, the job fails rather than passing
+      # without the lockd proof.
+      - name: Fetch lockd sources for the compile test (test-only, pinned)
+        run: |
+          set -euo pipefail
+          # agent/session-lock head, verified against the live remote.
+          LOCKD_COMMIT=7e7803ca535b3107520ae1aee00c50f83f56598d
+          if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
+            echo "lockd sources are on this branch; building from the checked-out tree."
+          else
+            echo "TEST-ONLY: fetching lockd sources read-only at $LOCKD_COMMIT; nothing is merged."
+            git fetch --depth 1 origin "$LOCKD_COMMIT"
+            git checkout FETCH_HEAD -- \
+              image/config/includes.chroot/opt/southbag-lockd-src \
+              image/config/includes.chroot/usr/local/bin/southbag-lock \
+              image/config/includes.chroot/usr/local/bin/southbag-unlock \
+              image/config/includes.chroot/usr/local/bin/southbag-face-unlock \
+              image/config/includes.chroot/etc/swaylock \
+              image/config/includes.chroot/etc/pam.d/swaylock
+          fi
+          for p in \
+            image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c \
+            image/config/includes.chroot/opt/southbag-lockd-src/southbag-face-capture.c \
+            image/config/includes.chroot/usr/local/bin/southbag-lock \
+            image/config/includes.chroot/usr/local/bin/southbag-unlock \
+            image/config/includes.chroot/usr/local/bin/southbag-face-unlock \
+            image/config/includes.chroot/etc/swaylock/config \
+            image/config/includes.chroot/etc/pam.d/swaylock; do
+            if [ ! -f "$p" ]; then
+              echo "::error::required lockd source missing after fetch: $p"
+              exit 1
+            fi
+          done
+          echo "All required lockd sources present."
+
+      - name: Build update packages
+        env:
+          # Same rule as pages.yml: empty ships no browser package and
+          # v1.0.0 must never be pinned (it predates app windows).
+          SOUTHBAG_BROWSER_VERSION: ""
+        run: |
+          mkdir -p out/pool
+          ./packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          ./packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
+          # Exactly the -dev packages image hook 0016 lists. The lockd
+          # sources are guaranteed present: the test-only fetch step above
+          # fails the job before this point otherwise.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential pkg-config libwayland-dev wayland-protocols \
+            libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+          ./packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
+          ls -la out/pool
+
+      - name: Validate package structure
+        run: |
+          for deb in out/pool/*.deb; do
+            dpkg-deb -I "$deb" > /dev/null
+            dpkg-deb -c "$deb" > /dev/null
+            echo "ok $deb"
+          done
