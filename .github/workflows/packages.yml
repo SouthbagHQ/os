@@ -48,13 +48,21 @@ jobs:
   lockd:
     runs-on: ubuntu-latest
     container: debian:trixie
+    defaults:
+      run:
+        # The runner falls back to dash inside this minimal image, and the
+        # steps below use bash syntax (${VAR:0:7}, bash-invoked scripts).
+        # bash is installed by the first step, so only that step runs
+        # under sh; it is POSIX-only.
+        shell: bash
     steps:
-      # The debian:trixie image is minimal: install git and CA roots first
-      # or the checkout action cannot run. Container jobs run as root, so
-      # nothing in this job uses sudo.
+      # The debian:trixie image is minimal: install git, CA roots and bash
+      # first or neither the checkout action nor the bash steps can run.
+      # Container jobs run as root, so nothing in this job uses sudo.
       - name: Install git for checkout
+        shell: sh
         run: |
-          apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates bash
           # The checked-out workspace is owned by the host runner user, but
           # this job runs as root in the container, so git refuses it as
           # dubious ownership. Allow this exact workspace path only - never
