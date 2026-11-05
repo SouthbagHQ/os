@@ -1,0 +1,29 @@
+// Southbag OS automatic updates (see docs/updates.md).
+//
+// Two channels, both checked daily by the apt-daily timers:
+//   - Debian security fixes (unattended-upgrades' normal job; both
+//     codename patterns below are the stock trixie 2.12 defaults)
+//   - the signed Southbag repository (shell, lock service, Browser)
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+        "origin=Southbag,codename=stable";
+};
+
+// Auto restart, as requested: when an upgrade run leaves
+// /var/run/reboot-required behind (the kernel sets it for itself, Southbag
+// packages set it in postinst), reboot at 03:30 device-local time. 03:30 is
+// our chosen default - no time was specified - picked as a low-use window.
+// WithUsers is set explicitly because the kiosk always has a logged-in
+// session: without it the code default (true) applies, so this line changes
+// nothing but keeps the decision visible. The reboot ends whatever session
+// is active at 03:30; session state is RAM either way, and sign-in is per
+// boot by design.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";

@@ -23,7 +23,9 @@ jobs:
         run: bun run build:device
 
       - name: Build the ISO
-        run: ./image/build.sh
+        # bash invocation, not ./: file modes are not guaranteed to
+        # survive publication through the web UI.
+        run: bash image/build.sh
 
       - name: Verify the image
         run: |

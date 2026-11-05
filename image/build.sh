@@ -39,6 +39,11 @@ chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth"
 hook="$here/config/hooks/normal/0025-southbag-browser.hook.chroot"
 [[ -f "$hook" ]] && chmod +x "$hook"
 
+# live-build executes hooks straight from this tree, so the update-channel
+# hook's executable bit matters here too - set it, don't trust the checkout.
+updates_hook="$here/config/hooks/normal/0026-southbag-updates.hook.chroot"
+[[ -f "$updates_hook" ]] && chmod +x "$updates_hook"
+
 # Hand the browser pin to the chroot hook (or remove a stale one).
 pin="$here/config/includes.chroot/etc/default/southbag-browser"
 rm -f "$pin"
