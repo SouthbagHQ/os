@@ -53,7 +53,13 @@ jobs:
       # or the checkout action cannot run. Container jobs run as root, so
       # nothing in this job uses sudo.
       - name: Install git for checkout
-        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates
+        run: |
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates
+          # The checked-out workspace is owned by the host runner user, but
+          # this job runs as root in the container, so git refuses it as
+          # dubious ownership. Allow this exact workspace path only - never
+          # a wildcard.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: actions/checkout@v5
 
