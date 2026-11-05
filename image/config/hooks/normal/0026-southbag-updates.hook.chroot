@@ -1,0 +1,23 @@
+#!/bin/sh
+# Stages the Southbag update channel when - and only when - its archive
+# keyring is present in the image. Before that one-time setup (see
+# docs/updates.md) the image builds and runs exactly as before, minus the
+# channel: the sources entry comes out so no device ever points apt at a
+# repo it cannot authenticate (which would make every apt transaction
+# fail). Debian security updates are unaffected either way.
+set -eu
+
+keyring=/usr/share/keyrings/southbag-archive-keyring.gpg
+sources=/etc/apt/sources.list.d/southbag.sources
+
+if [ ! -s "$keyring" ]; then
+  echo "southbag-updates: no archive keyring in the image config; building"
+  echo "southbag-updates: WITHOUT the Southbag channel (activation pending,"
+  echo "southbag-updates: see docs/updates.md). Debian security updates stay on."
+  rm -f "$sources"
+else
+  echo "southbag-updates: archive keyring present, Southbag channel enabled."
+fi
+
+# The daily apt timers are what makes updates automatic.
+systemctl enable apt-daily.timer apt-daily-upgrade.timer
