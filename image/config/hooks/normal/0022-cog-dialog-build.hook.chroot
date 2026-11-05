@@ -58,11 +58,13 @@ ninja -C build
 
 # Swap in the patched binaries with dpkg-divert so package management
 # keeps its original files under .stock names.
-dpkg-divert --add --rename --divert /usr/bin/cog.stock /usr/bin/cog
-cp build/cog /usr/bin/cog
+dpkg-divert --list /usr/bin/cog | grep -q . || \
+ dpkg-divert --add --rename --divert /usr/bin/cog.stock /usr/bin/cog
+cp build/launcher/cog /usr/bin/cog
 chmod 755 /usr/bin/cog
-dpkg-divert --add --rename --divert "$modpath.stock" "$modpath"
-cp build/platform/wayland/cogplatform-wl.so "$modpath"
+dpkg-divert --list "$modpath" | grep -q . || \
+ dpkg-divert --add --rename --divert "$modpath.stock" "$modpath"
+cp build/platform/wayland/libcogplatform-wl.so "$modpath"
 chmod 644 "$modpath"
 
 cd /
