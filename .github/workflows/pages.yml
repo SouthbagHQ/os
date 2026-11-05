@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Re-signs and republishes the apt repository weekly so its Valid-Until
+  # (30 days) never lapses between pushes. GitHub pauses schedules after 60
+  # days of repository inactivity; any push or manual run restarts it.
+  schedule:
+    - cron: "23 4 * * 2"
 
 permissions:
   contents: read
@@ -25,6 +30,50 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
+
+      # The signed apt repository ships inside the same Pages site under
+      # /apt/ - a Pages deploy replaces the whole site, so it cannot be a
+      # second workflow. The private signing key is a repository secret,
+      # placed once by a maintainer (packaging/gen-signing-key.sh, see
+      # docs/updates.md); until then the site deploys without /apt/.
+      - name: Check for the signing key
+        id: signing
+        env:
+          SOUTHBAG_APT_SIGNING_KEY: ${{ secrets.SOUTHBAG_APT_SIGNING_KEY }}
+        run: |
+          if [ -n "$SOUTHBAG_APT_SIGNING_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SOUTHBAG_APT_SIGNING_KEY is not set; deploying without the apt repository. See docs/updates.md."
+          fi
+
+      - name: Build, sign and verify the apt repository
+        if: steps.signing.outputs.present == 'true'
+        env:
+          SOUTHBAG_APT_SIGNING_KEY: ${{ secrets.SOUTHBAG_APT_SIGNING_KEY }}
+          # Pin a Southbag Browser release tag to publish the browser
+          # package; keep it identical to SOUTHBAG_BROWSER_VERSION in
+          # image/build.sh. Empty ships no browser package. v1.0.0 predates
+          # app windows and must never be pinned; the current app/session
+          # fixes live in PRs and have no release yet.
+          SOUTHBAG_BROWSER_VERSION: ""
+        run: |
+          bun run build:device
+          mkdir -p out/pool dist/apt
+          ./packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          ./packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
+          # lockd lands on its own branch; package it once its sources are
+          # in the tree. The script no-ops cleanly until then.
+          if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends               build-essential pkg-config libwayland-dev wayland-protocols               libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+          fi
+          ./packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
+          ./packaging/build-repo.sh out/pool dist/apt
+          ./packaging/verify-repo.sh dist/apt
+          rm -rf out/pool
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
