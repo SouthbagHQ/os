@@ -130,11 +130,20 @@ jobs:
           dpkg-deb -c "$deb" > /dev/null
           rm -rf /tmp/lockd-check
           dpkg-deb -x "$deb" /tmp/lockd-check
-          needed=$(readelf -d /tmp/lockd-check/usr/local/bin/southbag-lockd | grep NEEDED)
-          echo "$needed"
-          echo "$needed" | grep -q 'libjpeg\.so\.62' || { echo "::error::southbag-lockd is not linked against trixie's libjpeg.so.62"; exit 1; }
-          if echo "$needed" | grep -q 'libjpeg\.so\.8'; then
-            echo "::error::southbag-lockd picked up libjpeg.so.8 - wrong target userland"
+          # libjpeg belongs to the face-capture helper (it compresses
+          # camera frames), not the lock daemon - southbag-lockd links
+          # wayland-client/cairo/xkbcommon only. Assert each binary's real
+          # target linkage, and fail on Ubuntu's libjpeg.so.8 anywhere.
+          lockd_needed=$(readelf -d /tmp/lockd-check/usr/local/bin/southbag-lockd | grep NEEDED)
+          face_needed=$(readelf -d /tmp/lockd-check/usr/local/bin/southbag-face-capture | grep NEEDED)
+          echo "$lockd_needed"
+          echo "$face_needed"
+          for lib in libwayland-client.so.0 libcairo.so.2 libxkbcommon.so.0; do
+            echo "$lockd_needed" | grep -q "$lib" || { echo "::error::southbag-lockd missing expected $lib"; exit 1; }
+          done
+          echo "$face_needed" | grep -q 'libjpeg\.so\.62' || { echo "::error::southbag-face-capture is not linked against trixie's libjpeg.so.62"; exit 1; }
+          if echo "$lockd_needed$face_needed" | grep -q 'libjpeg\.so\.8'; then
+            echo "::error::libjpeg.so.8 linkage - wrong target userland"
             exit 1
           fi
-          echo "ok $deb (trixie linkage verified)"
+          echo "ok $deb (trixie linkage verified: lockd wayland/cairo/xkbcommon, face-capture libjpeg.so.62)"
