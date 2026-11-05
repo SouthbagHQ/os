@@ -54,7 +54,7 @@
 
 <p class="greeting" class:shown={greeted && !dismissed} aria-live="polite">
   <span class="line">{greeting}</span>
-  <span class="under">Everything is where you left it.</span>
+  <span class="under">Kevin is watching</span>
 </p>
 
 <style>
