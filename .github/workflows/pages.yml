@@ -75,7 +75,7 @@ jobs:
           # container with the exact hook-0016 -dev package list.
           if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
             VERSION="0.1.0+${GITHUB_SHA:0:7}"
-            docker run --rm -e VERSION -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" debian:trixie bash -c '
+            docker run --rm -e "VERSION=$VERSION" -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" debian:trixie bash -c '
               set -euo pipefail
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends build-essential pkg-config libwayland-dev wayland-protocols libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
