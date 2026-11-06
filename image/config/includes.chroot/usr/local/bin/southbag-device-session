@@ -182,6 +182,14 @@ case "${1:-}" in
   failed=0
   for note in "$root"/*.unit; do
    { [ -f "$note" ] || [ -L "$note" ]; } || continue
+   # The recovery surface stays up across the reset it triggered: killing it
+   # here would tear down the very page that must show the outcome. Its
+   # renderer profile lives on volatile tmpfs OUTSIDE the wiped root, so it
+   # can neither hold wiped data nor trip the path-based escaped-writer
+   # scan - which still refuses the wipe if any process, the renderer
+   # included, holds a real handle under the root. The supervisor retires
+   # the surface itself once this reset's HTTP answer has had its moment.
+   case "$note" in */recovery.unit) continue ;; esac
    stop_scope "$note" || failed=1
   done
   # Notes are only hints; live user scopes are ground truth. Stop any tracked-
@@ -189,6 +197,7 @@ case "${1:-}" in
   # window between scope start and note record).
   for u in $("$SYSTEMCTL" --user list-units --type=scope --no-legend 2>/dev/null | awk '{print $1}'); do
    case "$u" in
+    southbag-device-recovery.scope) ;; # see the recovery.unit note above
     southbag-device-*.scope) stop_unit "$u" || failed=1 ;;
    esac
   done
