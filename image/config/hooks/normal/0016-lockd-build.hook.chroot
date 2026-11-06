@@ -8,6 +8,18 @@
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
+# The Southbag apt channel is activation-gated: until the signed Pages
+# repository exists, its Release file 404s and a plain apt-get update fails
+# hard, killing the whole image build. Mask the channel for this hook's
+# build-time package installs only; hook 0026 decides the channel's final
+# in-image state (kept when the archive keyring is present, removed when
+# not), so the runtime image is unaffected either way.
+updates_src=/etc/apt/sources.list.d/southbag.sources
+if [ -f "$updates_src" ]; then
+  mv "$updates_src" /root/.southbag.sources.buildmask
+  trap 'mv /root/.southbag.sources.buildmask "$updates_src"' EXIT
+fi
+
 apt-get update
 # Runtime libraries the client links against must survive the purge below:
 # they are installed before this hook (package list / labwc deps), so they
