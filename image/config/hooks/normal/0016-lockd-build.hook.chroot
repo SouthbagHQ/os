@@ -51,7 +51,12 @@ gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-face-capture \
  southbag-face-capture.c -ljpeg
 chmod 755 /usr/local/bin/southbag-lockd /usr/local/bin/southbag-face-capture
 
+gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/southbag-input-client \
+ /opt/southbag-broker-src/southbag-input-client.c
+chmod 755 /usr/local/bin/southbag-input-client
+
 cd /
+rm -rf /opt/southbag-broker-src
 rm -rf /opt/southbag-lockd-src /tmp/ext-session-lock-v1.c /tmp/ext-session-lock-v1.h
 # Purge exactly what this hook installed, not a guessed package list.
 apt-get purge -y $added
