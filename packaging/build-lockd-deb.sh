@@ -49,6 +49,15 @@ gcc -O2 -Wall -Wextra -o "$root/usr/local/bin/southbag-face-capture" \
 for helper in southbag-lock southbag-unlock southbag-face-unlock; do
   [[ -f "$bin/$helper" ]] && install -m 755 "$bin/$helper" "$root/usr/local/bin/$helper"
 done
+# Customer stop-only broker transport and root lifecycle authority ship atomically
+# with the lock helper that requires them. No input worker is installed/started.
+install -d "$root/usr/local/sbin" "$root/etc/systemd/system"
+gcc -O2 -Wall -Wextra -Werror -o "$root/usr/local/bin/southbag-input-client" \
+ "$repo/image/config/includes.chroot/opt/southbag-broker-src/southbag-input-client.c"
+install -m 755 "$repo/image/config/includes.chroot/usr/local/sbin/southbag-input-broker" "$root/usr/local/sbin/"
+for unit in southbag-input-broker.service southbag-input-broker.socket southbag-input-broker@.service; do
+ install -m 644 "$repo/image/config/includes.chroot/etc/systemd/system/$unit" "$root/etc/systemd/system/$unit"
+done
 # swaylock config and its PAM entry ship with the lock feature (the image
 # keeps swaylock as the fallback client).
 for cfg in etc/swaylock/config etc/pam.d/swaylock; do
@@ -61,7 +70,7 @@ Package: southbag-lockd
 Version: $version
 Architecture: amd64
 Maintainer: Southbag <os-updates@southbag.cc>
-Depends: libwayland-client0, libcairo2, libxkbcommon0, libjpeg62-turbo, swaylock
+Depends: libc6, systemd, libwayland-client0, libcairo2, libxkbcommon0, libjpeg62-turbo, swaylock
 Section: misc
 Priority: optional
 Description: Southbag OS session lock
@@ -69,9 +78,50 @@ Description: Southbag OS session lock
  compositor hides every window; helper failure leaves the session locked.
 CTRL
 
+# Debian swaylock owns these paths. Use package-owned diversions rather than
+# force-overwriting another package's files; removal restores the prior bytes.
+cat > "$root/DEBIAN/preinst" <<'PRE'
+#!/bin/sh
+set -e
+case "$1" in install|upgrade)
+ for path in /etc/pam.d/swaylock /etc/swaylock/config; do
+  owner=$(dpkg-divert --listpackage "$path")
+  [ -z "$owner" ] || [ "$owner" = southbag-lockd ] || {
+   echo "Conflicting diversion for $path" >&2; exit 1;
+  }
+  dpkg-divert --package southbag-lockd --add --rename --divert "$path.southbag-distrib" "$path"
+ done
+ ;; esac
+PRE
+cat > "$root/DEBIAN/prerm" <<'BEFORE_REMOVE'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && command -v systemctl >/dev/null 2>&1; then
+ systemctl stop southbag-input-broker.socket
+ systemctl disable southbag-input-broker.socket southbag-input-broker.service
+fi
+BEFORE_REMOVE
+cat > "$root/DEBIAN/postrm" <<'REMOVE'
+#!/bin/sh
+set -e
+case "$1" in remove|purge|abort-install)
+ for path in /etc/pam.d/swaylock /etc/swaylock/config; do
+  if [ "$(dpkg-divert --listpackage "$path")" = southbag-lockd ]; then
+   dpkg-divert --package southbag-lockd --remove --rename --divert "$path.southbag-distrib" "$path"
+  fi
+ done
+ ;; esac
+REMOVE
+chmod 755 "$root/DEBIAN/preinst" "$root/DEBIAN/prerm" "$root/DEBIAN/postrm"
+
 cat > "$root/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e
+# Enable only the inhibit-only broker and request socket for the NEXT boot.
+# Never start them during a package update or activate an input worker.
+if command -v systemctl >/dev/null 2>&1; then
+ systemctl enable southbag-input-broker.service southbag-input-broker.socket
+fi
 touch /run/reboot-required
 POST
 chmod 755 "$root/DEBIAN/postinst"
