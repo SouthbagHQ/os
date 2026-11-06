@@ -1,0 +1,47 @@
+#!/bin/sh
+# Builds the native lock client and its camera helper inside the chroot,
+# then removes the toolchain and the sources: the image ships the two
+# binaries, not a compiler. The set of packages installed for this hook is
+# captured as a dpkg snapshot delta and purged by exact name, so no
+# compiler remains regardless of apt auto/manual marks in the build base
+# (autoremove alone left gcc behind in the derived build).
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+# Runtime libraries the client links against must survive the purge below:
+# they are installed before this hook (package list / labwc deps), so they
+# stay out of the snapshot delta; marking them manual as well is belt and
+# braces for the ones the -dev packages would otherwise drag in.
+apt-mark manual libwayland-client0 libcairo2 libxkbcommon0 \
+ libjpeg62-turbo libfontconfig1 libpixman-1-0 libffi8 libfreetype6 2>/dev/null || true
+
+dpkg-query -W -f='${Package}\n' | sort > /tmp/.pkgs-before
+apt-get install -y --no-install-recommends \
+ build-essential pkg-config libwayland-dev wayland-protocols \
+ libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+dpkg-query -W -f='${Package}\n' | sort > /tmp/.pkgs-after
+# Everything the install added - the toolchain included - by exact name.
+added=$(comm -13 /tmp/.pkgs-before /tmp/.pkgs-after)
+
+cd /opt/southbag-lockd-src
+wayland-scanner client-header \
+ /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
+ /tmp/ext-session-lock-v1.h
+wayland-scanner private-code \
+ /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
+ /tmp/ext-session-lock-v1.c
+
+gcc -O2 -Wall -Wextra -I/tmp -o /usr/local/bin/southbag-lockd \
+ southbag-lockd.c /tmp/ext-session-lock-v1.c \
+ $(pkg-config --cflags --libs wayland-client cairo xkbcommon)
+gcc -O2 -Wall -Wextra -o /usr/local/bin/southbag-face-capture \
+ southbag-face-capture.c -ljpeg
+chmod 755 /usr/local/bin/southbag-lockd /usr/local/bin/southbag-face-capture
+
+cd /
+rm -rf /opt/southbag-lockd-src /tmp/ext-session-lock-v1.c /tmp/ext-session-lock-v1.h
+# Purge exactly what this hook installed, not a guessed package list.
+apt-get purge -y $added
+rm -f /tmp/.pkgs-before /tmp/.pkgs-after
+apt-get clean
