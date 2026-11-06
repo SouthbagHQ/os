@@ -17,6 +17,7 @@ SYSTEMCTL=${SOUTHBAG_DEVICE_SYSTEMCTL:-systemctl}
 CGROUP_ROOT=${SOUTHBAG_DEVICE_CGROUP_ROOT:-/sys/fs/cgroup}
 COG=${SOUTHBAG_DEVICE_COG:-/usr/bin/cog}
 START_DEADLINE=${SOUTHBAG_DEVICE_START_DEADLINE:-10}
+PUBLISH_DEADLINE=${SOUTHBAG_DEVICE_PUBLISH_DEADLINE:-15}
 STOP_DEADLINE=${SOUTHBAG_DEVICE_STOP_DEADLINE:-15}
 
 # Stable lock lives outside the profile being erased. All binding, launch and
@@ -94,9 +95,19 @@ start_scope() {
    if [ -n "$cg" ]; then
     rm -f "$ready"
     # Atomic visibility (temp + rename) plus best-effort durability before the
-    # note is relied on: a torn note must never appear.
+    # note is relied on: a torn note must never appear. The publish is
+    # non-interactive and bounded: mv -f never prompts, stdin is /dev/null so
+    # a prompt could never block (observed: a non-writable leftover note made
+    # mv read the console for an overwrite answer, holding the session lock
+    # and starving resets), and the deadline frees the lock on a stuck
+    # publish - a failed publish stops the half-started unit like any launch
+    # failure, and the supervisor's retry re-takes the lock cleanly.
     printf '%s\n' "$unit.scope" >"$root/.$name.unit.tmp" && sync -f "$root/.$name.unit.tmp" 2>/dev/null
-    mv "$root/.$name.unit.tmp" "$root/$name.unit"
+    if ! timeout "$PUBLISH_DEADLINE" mv -f "$root/.$name.unit.tmp" "$root/$name.unit" </dev/null; then
+     "$SYSTEMCTL" --user stop "$unit.scope" >/dev/null 2>&1 || true
+     rm -f "$root/.$name.unit.tmp"
+     return 1
+    fi
     sync -f "$root" 2>/dev/null || true
     return 0
    fi
@@ -150,7 +161,8 @@ case "${1:-}" in
   mkdir -p "$root/wpe-data" "$root/wpe-cache" "$root/browser"
   if [ ! -f "$root/generation" ]; then
    cat /proc/sys/kernel/random/uuid >"$root/.generation.tmp" && sync -f "$root/.generation.tmp" 2>/dev/null
-   mv "$root/.generation.tmp" "$root/generation"
+   # Same non-interactive bounded publish as the scope note above.
+   timeout "$PUBLISH_DEADLINE" mv -f "$root/.generation.tmp" "$root/generation" </dev/null || { rm -f "$root/.generation.tmp"; exit 1; }
    sync -f "$root" 2>/dev/null || true
   fi
   start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --bg-color='#050608' http://127.0.0.1:8080/
