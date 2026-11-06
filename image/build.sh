@@ -48,6 +48,9 @@ chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-shell"
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-lock" \
   "$here/config/includes.chroot/usr/local/bin/southbag-unlock" \
   "$here/config/includes.chroot/usr/local/bin/southbag-face-unlock"
+# The root-owned input broker likewise ships through trees that may carry
+# web-flow 644 modes; the boot unit fails if it is not executable.
+chmod +x "$here/config/includes.chroot/usr/local/sbin/southbag-input-broker"
 # Test fixtures are executed directly by the suite via PATH; same web-flow
 # 644 hazard, so cover them here as well.
 chmod +x "$repo/tests/fixtures/bin/systemctl" "$repo/tests/fixtures/bin/systemd-run" 2>/dev/null || true
