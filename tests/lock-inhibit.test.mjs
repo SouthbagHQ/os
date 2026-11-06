@@ -127,20 +127,87 @@ test('broken broker (current errors) fails closed before any prompt',()=>{
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 
-test('absent broker (legacy image) does not block the lock',()=>{
- const {base,env,slog,call}=setup();
+test('absent broker denies the prompt: missing trusted state is never a pass-through',()=>{
+ const {base,state,env,slog}=setup();
  try{
   const r=spawnSync('sh',[lock],{env:{...env,SOUTHBAG_LOCK_BROKER:join(env.SOUTHBAG_STATE_DIR,'no-such-broker')},encoding:'utf8',timeout:20000});
-  assert.equal(r.status,0,r.stderr);
-  assert.match(readFileSync(slog,'utf8'),/invoked/);
+  assert.equal(r.status,1,'no prompt without a runnable broker');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 
-test('broker present but never begun (generation 0): nothing brokered, lock proceeds',()=>{
- const {base,slog,call}=setup();
+test('absent broker with a recorded generation 0 still denies: zero is not never-begun proof',()=>{
+ const {base,state,env,slog}=setup();
  try{
+  writeFileSync(join(env.SOUTHBAG_BROKER_STATE,'generation'),'0\n');
+  const r=spawnSync('sh',[lock],{env:{...env,SOUTHBAG_LOCK_BROKER:join(base,'no-such-broker')},encoding:'utf8',timeout:20000});
+  assert.equal(r.status,1,'no prompt: a zero record never substitutes for the barrier');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('runnable broker with no generation record (startup crash or record loss) denies with a live worker',async()=>{
+ const {base,state,fake,cgroot,slog,call}=setup();
+ try{
+  // Broker oneshot crashed or the record was lost before/after it ran: the
+  // broker runs but has nothing to report beyond generation 0.
+  const worker=seedRunning(fake,cgroot);
+  const exited=once(worker,'exit');
   const r=call();
-  assert.equal(r.status,0,r.stderr);
-  assert.match(readFileSync(slog,'utf8'),/invoked/);
+  assert.equal(r.status,1,'no prompt while trusted state is missing');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+  assert.equal(worker.exitCode,null,'worker left running; the lock never touches it');
+  worker.kill('SIGKILL');await exited;
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('runnable broker with a recorded generation 0 denies with a live worker: zero is denial, not never-begun',async()=>{
+ const {base,state,fake,cgroot,env,slog,call}=setup();
+ try{
+  const worker=seedRunning(fake,cgroot);
+  const exited=once(worker,'exit');
+  writeFileSync(join(env.SOUTHBAG_BROKER_STATE,'generation'),'0\n');
+  const r=call();
+  assert.equal(r.status,1,'no prompt: generation 0 never authorizes a prompt');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+  assert.equal(worker.exitCode,null,'worker left running');
+  worker.kill('SIGKILL');await exited;
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('record loss plus broker deletion with a live worker denies: combined missing-state ambiguity fails closed',async()=>{
+ const {base,state,fake,cgroot,env,slog,call,bcall}=setup();
+ try{
+  bcall('begin-generation');
+  const worker=seedRunning(fake,cgroot);
+  const exited=once(worker,'exit');
+  rmSync(join(env.SOUTHBAG_BROKER_STATE,'generation'));
+  const r=spawnSync('sh',[lock],{env:{...env,SOUTHBAG_LOCK_BROKER:join(base,'no-such-broker')},encoding:'utf8',timeout:20000});
+  assert.equal(r.status,1,'no prompt when broker and record are both gone');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+  assert.equal(worker.exitCode,null,'worker left running');
+  worker.kill('SIGKILL');await exited;
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('non-executable broker with a recorded generation 0 denies with a live worker',async()=>{
+ const {base,state,fake,cgroot,env,slog,call,bcall}=setup();
+ try{
+  bcall('begin-generation');
+  const worker=seedRunning(fake,cgroot);
+  const exited=once(worker,'exit');
+  chmodSync(join(base,'shim-bin','broker'),0o644);
+  writeFileSync(join(env.SOUTHBAG_BROKER_STATE,'generation'),'0\n');
+  const r=call();
+  assert.equal(r.status,1,'no prompt: non-runnable broker plus zero record is denial');
+  assert.ok(!existsSync(slog),'no credential UI appears on denial');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+  assert.equal(worker.exitCode,null,'worker left running');
+  worker.kill('SIGKILL');await exited;
  }finally{rmSync(base,{recursive:true,force:true})}
 });
