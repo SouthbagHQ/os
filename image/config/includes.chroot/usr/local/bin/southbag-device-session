@@ -50,7 +50,7 @@ stop_unit() {
  fi
  # API status alone is not enough: no tracked writer may remain.
  if [ -n "$cg" ] && [ -r "$CGROUP_ROOT$cg/cgroup.events" ]; then
-  ! grep -q '^populated 1$' "$CGROUP_ROOT$cg/cgroup.events" || return 1
+  ! grep -q '^populated 1$' "$CGROUP_ROOT$cg/cgroup.events" || { echo "stop_unit: $unit cgroup still populated" >&2; return 1; }
  fi
  return 0
 }
