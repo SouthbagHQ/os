@@ -2,6 +2,12 @@
 # LOCAL TEST ONLY: reproducible Browser source 8ce4382, not a release pin.
 set -eu
 export DEBIAN_FRONTEND=noninteractive
+# The package is staged locally before the build; builders without the
+# staging (CI) keep the cog image instead of failing.
+if [ ! -d /opt/southbag-build-test ]; then
+  echo "0024: no local browser test package staged; skipping"
+  exit 0
+fi
 cd /opt/southbag-build-test
 sha256sum -c SHA256SUMS
 apt-get install -y --no-install-recommends ./southbag-browser-1.0.0-linux-amd64.deb
