@@ -1,0 +1,7 @@
+[test]
+# Device-session contract tests drive real stop deadlines (3s) plus
+# launch/stop sequencing, which exceeds bun's 5s default per-test timeout
+# on shared CI runners. Node's runner has no such default; bun needs one
+# set explicitly. CI invokes `bun test` directly, so this lives in bunfig
+# rather than the package.json script.
+timeout = 30000
