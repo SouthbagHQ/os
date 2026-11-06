@@ -185,7 +185,7 @@ case "${1:-}" in
   ;;
  reset)
   expected=${2:-}
-  [ -n "$expected" ] && [ -f "$root/generation" ] && [ "$(cat "$root/generation")" = "$expected" ] || exit 1
+  if [ -z "$expected" ] || [ ! -f "$root/generation" ] || [ "$(cat "$root/generation")" != "$expected" ]; then echo "reset: generation mismatch" >&2; exit 1; fi
   touch "$root/blocked"
   sync -f "$root/blocked" 2>/dev/null || true
   # Account removed first under lock: Browser guard stops accepting callbacks.
@@ -214,8 +214,8 @@ case "${1:-}" in
    esac
   done
   # Never wipe while any writer, tracked or escaped, can still touch profiles.
-  [ "$failed" -eq 0 ] || exit 1
-  ! escaped_writers || exit 1
+  [ "$failed" -eq 0 ] || { echo "reset: a scope stop failed closed" >&2; exit 1; }
+  ! escaped_writers || { echo "reset: escaped writer still holds the profile root" >&2; exit 1; }
   rm -rf "$root/wpe-data" "$root/wpe-cache" "$root/browser"
   rm -f "$root/generation"
   rm -f "$root/blocked"
