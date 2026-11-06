@@ -8,6 +8,19 @@ import {fileURLToPath} from 'node:url';
 const here=dirname(fileURLToPath(import.meta.url));
 const manager=join(here,'..','image','config','includes.chroot','usr','local','bin','southbag-device-session');
 const fixtures=join(here,'fixtures','bin');
+// Fixture shims land 644 in web-published checkouts and the manager execs
+// them directly, so provision executable copies per run instead of trusting
+// tree modes (build.sh owns image-level normalization; tests must not
+// depend on it having run first).
+function shimBin(base){
+ const dir=join(base,'shim-bin');mkdirSync(dir);
+ for(const f of ['systemd-run','systemctl']){
+  const dst=join(dir,f);
+  writeFileSync(dst,readFileSync(join(fixtures,f)));
+  chmodSync(dst,0o755);
+ }
+ return dir;
+}
 // Contract tests run the manager against fixture systemd-run/systemctl shims.
 // Scope semantics (cgroup retention of setsid descendants) are image-proven,
 // not emulated here.
@@ -17,10 +30,11 @@ function setup(){
  mkdirSync(root,{recursive:true});
  mkdirSync(join(base,'systemd'),{recursive:true});
  mkdirSync(join(base,'cgroup'),{recursive:true});
+ const shim=shimBin(base);
  const env={...process.env,
   SOUTHBAG_STATE_DIR:state,
-  SOUTHBAG_DEVICE_SYSTEMD_RUN:join(fixtures,'systemd-run'),
-  SOUTHBAG_DEVICE_SYSTEMCTL:join(fixtures,'systemctl'),
+  SOUTHBAG_DEVICE_SYSTEMD_RUN:join(shim,'systemd-run'),
+  SOUTHBAG_DEVICE_SYSTEMCTL:join(shim,'systemctl'),
   SOUTHBAG_DEVICE_CGROUP_ROOT:join(base,'cgroup'),
   SOUTHBAG_DEVICE_START_DEADLINE:'3',
   SOUTHBAG_DEVICE_STOP_DEADLINE:'3',
@@ -177,10 +191,11 @@ test('HOME alignment: without SOUTHBAG_STATE_DIR the manager state lives under $
   const state=join(home,'.local','share','southbag'),root=join(state,'device-session');
   mkdirSync(join(base,'systemd'),{recursive:true});
   mkdirSync(join(base,'cgroup'),{recursive:true});
+ const shim=shimBin(base);
   const env={...process.env,
    HOME:home,
-   SOUTHBAG_DEVICE_SYSTEMD_RUN:join(fixtures,'systemd-run'),
-   SOUTHBAG_DEVICE_SYSTEMCTL:join(fixtures,'systemctl'),
+   SOUTHBAG_DEVICE_SYSTEMD_RUN:join(shim,'systemd-run'),
+   SOUTHBAG_DEVICE_SYSTEMCTL:join(shim,'systemctl'),
    SOUTHBAG_DEVICE_CGROUP_ROOT:join(base,'cgroup'),
    SOUTHBAG_DEVICE_START_DEADLINE:'3',
    SOUTHBAG_DEVICE_STOP_DEADLINE:'3',
