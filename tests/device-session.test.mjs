@@ -337,12 +337,12 @@ test('note publish never prompts on a tty: a silent console cannot wedge the lau
    ' except ChildProcessError: sys.exit(0)',
    'os.kill(pid,9);sys.exit(124)'].join('\n');
   const r=spawnSync('python3',['-c',py,manager],{env,encoding:'utf8',timeout:25000});
-  assert.equal(r.status,0,'launch completes on a silent tty');
+  assert.equal(r.status,0,'launch completes on a silent tty: '+r.stderr);
   assert.equal(readFileSync(join(root,'shell.unit'),'utf8'),'southbag-device-shell.scope\n');
   // lock released after the publish: a reset takes it promptly
   const gen=readFileSync(join(root,'generation'),'utf8').trim();
   const r2=spawnSync('sh',[manager,'reset',gen],{env,encoding:'utf8',timeout:20000});
-  assert.equal(r2.status,0,'reset takes the lock right after a publish');
+  assert.equal(r2.status,0,'reset takes the lock right after a publish: '+r2.stderr);
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 
