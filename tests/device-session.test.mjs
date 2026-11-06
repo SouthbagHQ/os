@@ -232,6 +232,11 @@ test('recovery surface: gated on blocked+generation, volatile profile, reset sti
   assert.equal(call('reset','one').status,0,'reset retry succeeds');
   assert.equal(existsSync(join(root,'blocked')),false,'unblocked after verified cleanup');
   assert.equal(existsSync(join(root,'generation')),false,'generation cleared');
+  // The reset leaves the surface it was triggered from ALIVE: its renderer
+  // profile is volatile tmpfs outside the wiped root, and the supervisor
+  // retires it once the HTTP answer has landed. Tearing it down mid-reset
+  // is what made the page's outcome states unreachable in the real UI.
+  assert.equal(existsSync(join(root,'recovery.unit')),true,'recovery surface survives its own reset');
  }finally{
   spawnSync('/usr/bin/pkill',['-KILL','-f','sleep 31']);
   rmSync(base,{recursive:true,force:true})}
