@@ -1,0 +1,30 @@
+#!/bin/sh
+# Host-test stand-in for: systemd-run --user --scope --collect --unit=N CMD...
+# Runs CMD in a new session and records unit state under FAKE_SYSTEMD_STATE.
+# It cannot emulate cgroup retention of setsid descendants; actual containment
+# is proven in the image, not here.
+state=${FAKE_SYSTEMD_STATE:?}
+unit=
+while [ $# -gt 0 ]; do
+ case "$1" in
+  --unit=*) unit=${1#--unit=} ;;
+  --unit) unit=$2; shift ;;
+  --user|--scope|--collect) ;;
+  --property=*) ;;
+  --property) shift ;;
+  *) break ;;
+ esac
+ shift
+done
+[ -n "$unit" ] || exit 1
+unit=${unit%.scope}.scope
+mkdir -p "$state/units" "$SOUTHBAG_DEVICE_CGROUP_ROOT/units/$unit"
+if [ -e "$state/hang-start" ]; then
+ setsid sleep 300 &
+else
+ setsid "$@" &
+fi
+pid=$!
+printf '%s\n' "$pid" >"$state/units/$unit.pid"
+printf 'populated 1\nfrozen 0\n' >"$SOUTHBAG_DEVICE_CGROUP_ROOT/units/$unit/cgroup.events"
+printf 'Running as unit: %s; invocation ID: fake\n' "$unit"
