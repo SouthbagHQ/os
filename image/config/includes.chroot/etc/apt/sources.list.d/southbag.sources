@@ -1,0 +1,7 @@
+# The Southbag update channel (see docs/updates.md). Signature-enforced: apt
+# refuses anything not signed by the committed archive key.
+Types: deb
+URIs: https://southbaghq.github.io/os/apt
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/southbag-archive-keyring.gpg
