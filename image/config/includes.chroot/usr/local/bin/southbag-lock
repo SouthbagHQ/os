@@ -1,0 +1,37 @@
+#!/bin/sh
+# Engages the session lock.
+#
+# swaylock is an ext-session-lock client: while it holds the lock the
+# compositor hides every window - shell, app windows, all of them - and
+# only the lock surface gets input. This is the compositor doing the
+# locking, not a page drawing over the desktop.
+#
+# Engages offline too, on purpose: the lock protects the session whenever
+# it is asked to, and unlocking simply stays impossible until Identity is
+# reachable again. The only refusal is when no account is signed in, which
+# is the one case with nothing to protect (and no account to verify an
+# unlock against, so engaging would only strand the machine).
+set -u
+PATH=/usr/local/bin:/usr/bin:/bin; export PATH
+
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+[ -r "$state/account" ] || exit 1
+pgrep -x swaylock >/dev/null 2>&1 && exit 0
+pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
+
+# Flag first: if the compositor dies under the lock, the next session must
+# come up locked again rather than expose the desktop (southbag-shell
+# re-engages, southbag-unlock clears the flag on a verified unlock). In the
+# customer's home rather than /run so this also holds across a reboot on an
+# installed system; on a live boot home is ephemeral anyway.
+mkdir -p "$state"
+: > "$state/locked"
+
+# The native client (password + face in one lock surface) replaces swaylock
+# only when deliberately enabled with the /etc/southbag-lockd marker. Until
+# it is proven on a real image, swaylock stays the door.
+if [ -e /etc/southbag-lockd ] && [ -x /usr/local/bin/southbag-lockd ]; then
+ exec /usr/local/bin/southbag-lockd
+fi
+
+exec swaylock
