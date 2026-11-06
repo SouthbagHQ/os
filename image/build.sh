@@ -35,10 +35,11 @@ cp -R "$here/shell-extra/." "$served/"
 chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth" \
   "$served/cgi-bin/lock" "$served/cgi-bin/account" "$served/cgi-bin/device-session"
 
-# live-build executes hooks straight from this tree, so the browser hook's
-# executable bit matters here too — set it, don't trust the checkout.
-hook="$here/config/hooks/normal/0025-southbag-browser.hook.chroot"
-[[ -f "$hook" ]] && chmod +x "$hook"
+# live-build executes hooks straight from this tree, so every hook's
+# executable bit matters here — set them all, don't trust the checkout.
+for hook in "$here"/config/hooks/normal/*.hook.*; do
+  [[ -f "$hook" ]] && chmod +x "$hook"
+done
 
 # Same story for the lock helpers shipped via includes.chroot: web flows
 # land files as 644 and the lock is useless if these are not executable.
@@ -47,7 +48,9 @@ chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-shell"
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-lock" \
   "$here/config/includes.chroot/usr/local/bin/southbag-unlock" \
   "$here/config/includes.chroot/usr/local/bin/southbag-face-unlock"
-chmod +x "$here/config/hooks/normal/0016-lockd-build.hook.chroot" 2>/dev/null || true
+# Test fixtures are executed directly by the suite via PATH; same web-flow
+# 644 hazard, so cover them here as well.
+chmod +x "$repo/tests/fixtures/bin/systemctl" "$repo/tests/fixtures/bin/systemd-run" 2>/dev/null || true
 
 # Hand the browser pin to the chroot hook (or remove a stale one).
 pin="$here/config/includes.chroot/etc/default/southbag-browser"
