@@ -347,7 +347,12 @@ test('note publish never prompts on a tty: a silent console cannot wedge the lau
   // has already exited (pty teardown races it) and the reset fails closed on
   // the fixture's still-populated cgroup marker - real systemd would reap it,
   // and the stale-gate test pins the fail-closed behavior itself.
-  assert.ok(r2.status===0 || /a scope stop failed closed/.test(r2.stderr),
+  // The publish must release the session lock promptly (the original wedge
+  // held it forever). The reset proves that by completing - success when the
+  // scope stops cleanly, or the pinned stale-populated-cgroup refusal when
+  // the fixture still marks the just-exited scope's cgroup busy. Any other
+  // outcome, including a wedged reset hitting the spawn timeout, fails here.
+  assert.ok(r2.status===0 || (r2.status===1 && /cgroup still populated/.test(r2.stderr)),
    'reset runs promptly right after a publish: status='+r2.status+' stderr='+r2.stderr);
  }finally{rmSync(base,{recursive:true,force:true})}
 });
