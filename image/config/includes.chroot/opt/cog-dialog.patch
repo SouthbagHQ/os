@@ -311,7 +311,7 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-platform-wl.c b/pla
 diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c b/platform/wayland/cog-script-dialog-wl.c
 --- a/platform/wayland/cog-script-dialog-wl.c	1970-01-01 10:00:00.000000000 +1000
 +++ b/platform/wayland/cog-script-dialog-wl.c	2026-11-06 04:56:18.844251408 +1100
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,322 @@
 +/*
 + * cog-script-dialog-wl.c
 + * Southbag: rendered, actionable script dialogs for the wayland platform.
@@ -383,21 +383,61 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +};
 +
 +static void
-+wrap_message(const char *text, char lines[][96], int *n_lines)
++wrap_message(cairo_t *cr, const char *text, char lines[][96], int *n_lines)
 +{
-+    /* crude fixed-width wrap, ~56 chars per line at MESSAGE_TEXT_SIZE */
++    /* Measure the same font used to paint, preserving UTF-8 boundaries. */
 +    int line = 0, col = 0;
-+    for (const char *p = text; *p && line < MESSAGE_MAX_LINES; p++) {
-+        if (*p == '\n' || col >= 56) {
++    const char *p = text;
++    lines[0][0] = '\0';
++    cairo_set_font_size(cr, MESSAGE_TEXT_SIZE);
++    while (*p) {
++        if (*p == '\n') {
++            p++;
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
++        }
++        const char *next = g_utf8_next_char(p);
++        int len = next - p;
++        if (col + len >= 96) {
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
++        }
++        memcpy(lines[line] + col, p, len);
++        lines[line][col + len] = '\0';
++        cairo_text_extents_t ext;
++        cairo_text_extents(cr, lines[line], &ext);
++        if (col && ext.x_advance > DIALOG_WIDTH - 2 * DIALOG_PADDING) {
 +            lines[line][col] = '\0';
 +            if (line + 1 >= MESSAGE_MAX_LINES)
-+                break; /* keep the final valid line, never index row 8 */
-+            line++; col = 0;
-+            if (*p == '\n') continue;
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
 +        }
-+        if (col < 95) lines[line][col++] = *p;
++        col += len; p = next;
 +    }
-+    lines[line][col] = '\0';
++    /* Eight-line v1 remains bounded: disclose omitted content explicitly. */
++    if (*p) {
++        const char *suffix = "... [more]";
++        while (col + strlen(suffix) >= 96) {
++            char *prev = g_utf8_find_prev_char(lines[line], lines[line] + col);
++            col = prev ? prev - lines[line] : 0;
++        }
++        for (;;) {
++            strcpy(lines[line] + col, suffix);
++            cairo_text_extents_t ext;
++            cairo_text_extents(cr, lines[line], &ext);
++            if (col + strlen(suffix) < 96 &&
++                ext.x_advance <= DIALOG_WIDTH - 2 * DIALOG_PADDING)
++                break;
++            if (!col) break;
++            char *prev = g_utf8_find_prev_char(lines[line], lines[line] + col);
++            col = prev ? prev - lines[line] : 0;
++        }
++    }
 +    *n_lines = line + 1;
 +}
 +
@@ -424,7 +464,7 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    char lines[MESSAGE_MAX_LINES][96];
 +    int n_lines = 0;
 +    const char *msg = webkit_script_dialog_get_message(sd->dialog);
-+    wrap_message(msg ? msg : "", lines, &n_lines);
++    wrap_message(sd->cr, msg ? msg : "", lines, &n_lines);
 +    cairo_set_font_size(sd->cr, MESSAGE_TEXT_SIZE);
 +    cairo_set_source_rgba(sd->cr, 0, 0, 0, 1);
 +    for (int i = 0; i < n_lines; i++) {
@@ -480,7 +520,11 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    char lines[MESSAGE_MAX_LINES][96];
 +    int n_lines = 0;
 +    const char *msg = webkit_script_dialog_get_message(dialog);
-+    wrap_message(msg ? msg : "", lines, &n_lines);
++    cairo_surface_t *measure_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
++    cairo_t *measure = cairo_create(measure_surface);
++    wrap_message(measure, msg ? msg : "", lines, &n_lines);
++    cairo_destroy(measure);
++    cairo_surface_destroy(measure_surface);
 +
 +    sd->num_buttons = (sd->type == WEBKIT_SCRIPT_DIALOG_ALERT) ? 1 : 2;
 +    sd->buttons[0].label = "OK";
