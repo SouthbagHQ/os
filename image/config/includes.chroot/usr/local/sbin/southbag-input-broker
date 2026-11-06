@@ -59,12 +59,19 @@ stop_barrier() {
  unit_active && arc=0 || arc=$?
  if [ "$arc" = 2 ]; then set_state failed; return 1; fi
  if [ "$arc" = 0 ]; then
+  # Capture the unit cgroup BEFORE stopping: once teardown completes systemd
+  # may drop it, and a barrier that cannot name the cgroup cannot verify it.
+  cg=$("$SYSTEMCTL" show "$UNIT" --property=ControlGroup --value 2>/dev/null) || { set_state failed; return 1; }
+  [ -n "$cg" ] || { set_state failed; return 1; }
   # 8>&- : the backgrounded stop (and anything it orphans) must not inherit
   # the broker lock, or a killed stopper would hold the flock for its whole
   # lifetime and wedge the next transition behind it.
   "$SYSTEMCTL" stop "$UNIT" 8>&- >/dev/null 2>&1 &
   stopper=$!
-  n=0
+  # Wall-clock deadline, not an iteration count: on a loaded system each
+  # is-active probe can take seconds, so counting loops would let the
+  # barrier outwait the unit's own stop timeout instead of failing fast.
+  deadline=$(( $(date +%s) + STOP_DEADLINE ))
   while :; do
    unit_active && arc=0 || arc=$?
    if [ "$arc" = 2 ]; then
@@ -72,9 +79,36 @@ stop_barrier() {
     set_state failed
     return 1
    fi
-   [ "$arc" = 1 ] && break
-   n=$((n+1))
-   if [ "$n" -ge $((STOP_DEADLINE*10)) ]; then
+   # API-inactive alone is not stopped: is-active flips while the unit is
+   # still deactivating and its processes are alive. Break only when the
+   # captured cgroup is also provably empty (removed, or populated 0); an
+   # unreadable events file is unverifiable and reads as still busy.
+   if [ "$arc" = 1 ]; then
+    # Break only on positive proof of empty: a regular, readable events
+    # file reading populated 0, or a cgroup systemd already removed. A
+    # populated 1, a read error, a non-regular file, or unknown content
+    # are all "not proven empty" and keep waiting until the deadline.
+    ev="$CGROUP_ROOT$cg/cgroup.events"
+    if [ ! -e "$ev" ]; then break; fi
+    if [ -f "$ev" ] && [ -r "$ev" ] && grep -q '^populated 0$' "$ev"; then break; fi
+   fi
+   if [ "$(date +%s)" -ge "$deadline" ]; then
+    kill "$stopper" 2>/dev/null || true
+    set_state failed
+    return 1
+   fi
+   sleep .1
+  done
+  # Reap the stopper under its own wall-clock bound. A hung stop job (an
+  # ExecStop hook that will not return, an unresponsive adapter) must not
+  # wedge the barrier after the worker is provably gone; an unreapable
+  # stopper is an adapter anomaly and fails closed like any other
+  # unverifiable state. The stopper never holds the broker lock (8>&-
+  # above), so killing it cannot strand the lock, and it spawns no
+  # descendants of its own that could inherit one.
+  wait_deadline=$(( $(date +%s) + STOP_DEADLINE ))
+  while [ -d "/proc/$stopper" ] && [ "$(awk '{print $3}' "/proc/$stopper/stat" 2>/dev/null)" != "Z" ]; do
+   if [ "$(date +%s)" -ge "$wait_deadline" ]; then
     kill "$stopper" 2>/dev/null || true
     set_state failed
     return 1
@@ -85,9 +119,15 @@ stop_barrier() {
  fi
  # API status alone is not enough: no tracked writer may remain. An
  # unverifiable cgroup read fails closed like a populated one.
+ # Final re-verification after the stop job is reaped. Same rule as the
+ # wait loop: only populated 0 (or a cgroup systemd already removed) proves
+ # empty; populated 1, an unreadable or non-regular events file, or unknown
+ # content fail closed. An empty ControlGroup answer here means systemd
+ # already tore the unit down completely.
  cg=$("$SYSTEMCTL" show "$UNIT" --property=ControlGroup --value 2>/dev/null) || { set_state failed; return 1; }
- if [ -n "$cg" ] && [ -r "$CGROUP_ROOT$cg/cgroup.events" ]; then
-  if grep -q '^populated 1$' "$CGROUP_ROOT$cg/cgroup.events"; then
+ if [ -n "$cg" ] && [ -e "$CGROUP_ROOT$cg/cgroup.events" ]; then
+  ev="$CGROUP_ROOT$cg/cgroup.events"
+  if ! { [ -f "$ev" ] && [ -r "$ev" ] && grep -q '^populated 0$' "$ev"; }; then
    set_state failed
    return 1
   fi
