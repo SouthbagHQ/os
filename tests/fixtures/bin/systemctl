@@ -5,11 +5,18 @@ cgroot=${SOUTHBAG_DEVICE_CGROUP_ROOT:?}
 [ "${1:-}" = "--user" ] && shift
 cmd=${1:-}; shift || true
 unit=
-for a in "$@"; do case "$a" in *.scope) unit=$a ;; esac; done
-pid_alive() { [ -f "$state/units/$1.pid" ] && kill -0 "$(cat "$state/units/$1.pid")" 2>/dev/null; }
+for a in "$@"; do case "$a" in *.scope|*.service) unit=$a ;; esac; done
+# Concurrent probes race a stop removing the pid file: read once, treat a
+# vanished/empty file as inactive (never as a probe error).
+pid_alive() {
+ [ -f "$state/units/$1.pid" ] || return 1
+ pid=$(cat "$state/units/$1.pid" 2>/dev/null) || return 1
+ [ -n "$pid" ] || return 1
+ kill -0 "$pid" 2>/dev/null
+}
 case "$cmd" in
  show)
-  if [ -f "$state/units/$unit.pid" ]; then printf '/units/%s\n' "$unit"; fi
+  if [ -f "$state/units/$unit.pid" ] || [ -d "$cgroot/units/$unit" ]; then printf '/units/%s\n' "$unit"; fi
   ;;
  is-active)
   pid_alive "$unit"
@@ -23,7 +30,11 @@ case "$cmd" in
    kill -KILL "$pid" 2>/dev/null || true
   fi
   rm -f "$state/units/$unit.pid"
-  printf 'populated 0\nfrozen 0\n' >"$cgroot/units/$unit/cgroup.events"
+  # stop-leaves-populated simulates a scope/service whose cgroup stays busy
+  # after the stop API call returns (the broker must fail closed on it).
+  if [ ! -e "$state/stop-leaves-populated" ]; then
+   printf 'populated 0\nfrozen 0\n' >"$cgroot/units/$unit/cgroup.events"
+  fi
   ;;
  list-units)
   for f in "$state"/units/*.pid; do
