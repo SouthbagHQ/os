@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync,chmodSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync,readdirSync,chmodSync,symlinkSync,openSync,closeSync} from 'node:fs';
+import {constants as fsConstants} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -306,5 +307,55 @@ test('orphan live scope without a note is stopped by live enumeration during res
   const left=readdirSync(join(env.FAKE_SYSTEMD_STATE,'units')).filter(f=>f.endsWith('.pid'));
   assert.equal(left.length,0,'orphan scope stopped');
   assert.equal(existsSync(join(root,'browser')),false,'profile wiped');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('note publish never prompts on a tty: a silent console cannot wedge the launch',{skip:spawnSync('python3',['--version'],{stdio:'ignore'}).status!==0},()=>{
+ const {base,root,env}=setup();
+ try{
+  // The on-device wedge: stdin is a real console tty and a non-writable
+  // leftover note arms mv's overwrite prompt; nobody answers, so the
+  // publish hangs holding the session lock. Reproduce faithfully: a pty
+  // that never answers, plus a read-only leftover target. Pre-fix this
+  // hangs and the harness kills it (124); post-fix mv -f never asks.
+  writeFileSync(join(root,'shell.unit'),'foreign\n');
+  chmodSync(join(root,'shell.unit'),0o444);
+  const py=[
+   'import pty,os,sys,select,time',
+   'pid,fd=pty.fork()',
+   'if pid==0:',
+   ' os.execvpe("sh",["sh",sys.argv[1],"shell"],dict(os.environ))',
+   'deadline=time.time()+15',
+   'while time.time()<deadline:',
+   ' r,_,_=select.select([fd],[],[],0.5)',
+   ' if r:',
+   '  try: os.read(fd,4096)',
+   '  except OSError: pass',
+   ' try:',
+   '  w,status=os.waitpid(pid,os.WNOHANG)',
+   '  if w: sys.exit(os.waitstatus_to_exitcode(status))',
+   ' except ChildProcessError: sys.exit(0)',
+   'os.kill(pid,9);sys.exit(124)'].join('\n');
+  const r=spawnSync('python3',['-c',py,manager],{env,encoding:'utf8',timeout:25000});
+  assert.equal(r.status,0,'launch completes on a silent tty');
+  assert.equal(readFileSync(join(root,'shell.unit'),'utf8'),'southbag-device-shell.scope\n');
+  // lock released after the publish: a reset takes it promptly
+  const gen=readFileSync(join(root,'generation'),'utf8').trim();
+  const r2=spawnSync('sh',[manager,'reset',gen],{env,encoding:'utf8',timeout:20000});
+  assert.equal(r2.status,0,'reset takes the lock right after a publish');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('non-writable leftover note is replaced without prompting',()=>{
+ const {base,root,env}=setup();
+ try{
+  // Stands in for a foreign remnant the supervisor cannot write: mv -f must
+  // still replace it through the owned directory, no questions asked. A
+  // prompting mv on EOF stdin would skip the rename and keep the stale note.
+  writeFileSync(join(root,'shell.unit'),'foreign\n');
+  chmodSync(join(root,'shell.unit'),0o444);
+  const r=spawnSync('sh',[manager,'shell'],{env,encoding:'utf8',timeout:20000});
+  assert.equal(r.status,0,'launch succeeds despite the leftover');
+  assert.equal(readFileSync(join(root,'shell.unit'),'utf8'),'southbag-device-shell.scope\n');
  }finally{rmSync(base,{recursive:true,force:true})}
 });
