@@ -311,7 +311,7 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-platform-wl.c b/pla
 diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c b/platform/wayland/cog-script-dialog-wl.c
 --- a/platform/wayland/cog-script-dialog-wl.c	1970-01-01 10:00:00.000000000 +1000
 +++ b/platform/wayland/cog-script-dialog-wl.c	2026-11-06 04:56:18.844251408 +1100
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,278 @@
 +/*
 + * cog-script-dialog-wl.c
 + * Southbag: rendered, actionable script dialogs for the wayland platform.
@@ -390,6 +390,8 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    for (const char *p = text; *p && line < MESSAGE_MAX_LINES; p++) {
 +        if (*p == '\n' || col >= 56) {
 +            lines[line][col] = '\0';
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break; /* keep the final valid line, never index row 8 */
 +            line++; col = 0;
 +            if (*p == '\n') continue;
 +        }
