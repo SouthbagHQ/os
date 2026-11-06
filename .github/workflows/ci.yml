@@ -13,6 +13,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - run: python3 tests/broker-ipc.test.py
       # The deadline-driven device-session contract tests exceed bun's 5s
       # default per-test timeout; bunfig has no timeout key (oven-sh/bun#7789),
       # so set it on the command line here.
