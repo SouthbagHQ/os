@@ -12,6 +12,11 @@ set -eu
 keyring=/usr/share/keyrings/southbag-archive-keyring.gpg
 sources=/etc/apt/sources.list.d/southbag.sources
 
+# Undo hook 0009's build-time mask before deciding the final state.
+if [ -f /root/.southbag.sources.buildmask ]; then
+  mv /root/.southbag.sources.buildmask "$sources"
+fi
+
 if [ ! -s "$keyring" ]; then
   echo "southbag-updates: no archive keyring in the image config; building"
   echo "southbag-updates: WITHOUT the Southbag channel (activation pending,"
