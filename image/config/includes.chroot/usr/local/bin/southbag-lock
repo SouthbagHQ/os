@@ -32,12 +32,20 @@ pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 # A broker that is present but unreadable fails closed the same way; only
 # an absent broker (no worker can be brokered) is skipped.
 broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/sbin/southbag-input-broker}
+broker_state=${SOUTHBAG_BROKER_STATE:-/run/southbag-input-broker}
 if [ -x "$broker" ]; then
  gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
  [ -n "$gen" ] || exit 1
  if [ "$gen" != 0 ]; then
   "$broker" inhibit "$gen" || exit 1
  fi
+elif [ -e "$broker_state/generation" ]; then
+ # A broker that cannot run cannot stop the worker or prove it stopped. Only
+ # a recorded generation of 0 positively establishes that no worker was ever
+ # brokered; a begun generation or an unreadable record can hide a live
+ # worker, so the lock fails closed (no prompt, no locked flag).
+ gen=$(cat "$broker_state/generation" 2>/dev/null || printf 'unknown\n')
+ [ "$gen" = 0 ] || exit 1
 fi
 
 mkdir -p "$state"
