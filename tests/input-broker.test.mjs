@@ -115,13 +115,22 @@ test('a hung stop fails closed and never silently retries',async()=>{
   const worker=seedRunning(fake,cgroot);
   const exited=once(worker,'exit');
   writeFileSync(join(fake,'hang-stop'),'');
+  const t0=Date.now();
   const r=call('inhibit','1');
+  const dt=Date.now()-t0;
   assert.notEqual(r.status,0,'hung stop must not report readiness');
   assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'failed');
+  // Wall-clock deadline (3s here) bounds the barrier: it must engage well
+  // before the 20s call timeout, proving expiry is not iteration-paced.
+  assert.ok(dt>=2000&&dt<15000,'barrier must expire at the wall deadline (second-flooring shaves up to 1s), took '+dt+'ms');
   assert.equal(worker.exitCode,null,'worker survives the hung stop');
   assert.equal(worker.signalCode,null);
   rmSync(join(fake,'hang-stop'));
+  // A killed stopper never inherits the broker lock fd (8>&-): a follow-up
+  // verb must take the lock and answer promptly, not wedge behind it.
+  const t1=Date.now();
   const r2=call('inhibit','1');
+  assert.ok(Date.now()-t1<10000,'follow-up verb wedged behind a stranded lock');
   assert.equal(r2.status,0,'explicit later inhibit re-runs the barrier');
   assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'inhibited');
   await exited;
