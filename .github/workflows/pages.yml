@@ -65,13 +65,23 @@ jobs:
           # guaranteed to survive publication.
           bash packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
           bash packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
-          # lockd lands on its own branch; package it once its sources are
-          # in the tree. The script no-ops cleanly until then.
+          # lockd must compile against the TARGET userland: Debian trixie
+          # ships libjpeg62-turbo (libjpeg.so.62) where ubuntu-latest has only
+          # libjpeg-turbo8 - a binary linked on the host would not load on the
+          # device, and libjpeg62-turbo-dev does not exist on ubuntu-latest at
+          # all. packages.yml uses a debian:trixie container job for the same
+          # reason; the Pages actions need the runner's node, so this job
+          # stays on the host and the lockd build runs in a trixie docker
+          # container with the exact hook-0016 -dev package list.
           if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends               build-essential pkg-config libwayland-dev wayland-protocols               libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+            VERSION="0.1.0+${GITHUB_SHA:0:7}"
+            docker run --rm -e VERSION -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" debian:trixie bash -c '
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends build-essential pkg-config libwayland-dev wayland-protocols libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+              bash packaging/build-lockd-deb.sh "$VERSION" out/pool
+            '
           fi
-          bash packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
           bash packaging/build-repo.sh out/pool dist/apt
           bash packaging/verify-repo.sh dist/apt
           rm -rf out/pool
