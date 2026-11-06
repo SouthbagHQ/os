@@ -24,6 +24,22 @@ pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 # re-engages, southbag-unlock clears the flag on a verified unlock). In the
 # customer's home rather than /run so this also holds across a reboot on an
 # installed system; on a live boot home is ephemeral anyway.
+# The expander worker must be stopped and its cgroup empty before any
+# credential prompt appears. The broker's inhibit is the stop barrier; an
+# OK return is the prerequisite for the prompt. A failed barrier fails
+# closed: no prompt, no locked flag, the session stays as it was - denial
+# of the lock at worst, never credential entry with capture still live.
+# A broker that is present but unreadable fails closed the same way; only
+# an absent broker (no worker can be brokered) is skipped.
+broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/sbin/southbag-input-broker}
+if [ -x "$broker" ]; then
+ gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
+ [ -n "$gen" ] || exit 1
+ if [ "$gen" != 0 ]; then
+  "$broker" inhibit "$gen" || exit 1
+ fi
+fi
+
 mkdir -p "$state"
 : > "$state/locked"
 
@@ -34,4 +50,5 @@ if [ -e /etc/southbag-lockd ] && [ -x /usr/local/bin/southbag-lockd ]; then
  exec /usr/local/bin/southbag-lockd
 fi
 
-exec swaylock
+# Test-only adapter; the image always uses the real default.
+exec ${SOUTHBAG_LOCK_SURFACE:-swaylock}
