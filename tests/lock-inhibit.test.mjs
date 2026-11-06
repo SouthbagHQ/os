@@ -87,6 +87,46 @@ test('barrier failure fails closed: no prompt, no locked flag',async()=>{
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 
+test('non-executable broker with a begun generation fails closed: no prompt, worker untouched',async()=>{
+ const {base,state,fake,cgroot,slog,call,bcall}=setup();
+ try{
+  bcall('begin-generation');
+  const worker=seedRunning(fake,cgroot);
+  const exited=once(worker,'exit');
+  chmodSync(join(base,'shim-bin','broker'),0o644); // the web-upload/legacy-loss case
+  const r=call();
+  assert.equal(r.status,1,'no prompt while a brokered worker may be live');
+  assert.ok(!existsSync(slog),'no credential prompt without the barrier');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+  assert.equal(worker.exitCode,null,'worker left running; the lock never touches it');
+  worker.kill('SIGKILL');await exited;
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('absent broker with a recorded begun generation fails closed',()=>{
+ const {base,state,env,slog}=setup();
+ try{
+  writeFileSync(join(env.SOUTHBAG_BROKER_STATE,'generation'),'1\n');
+  const r=spawnSync('sh',[lock],{env:{...env,SOUTHBAG_LOCK_BROKER:join(base,'no-such-broker')},encoding:'utf8',timeout:20000});
+  assert.equal(r.status,1,'no prompt: the broker that owns the worker cannot run');
+  assert.ok(!existsSync(slog),'no credential prompt');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('broken broker (current errors) fails closed before any prompt',()=>{
+ const {base,state,slog,call}=setup();
+ try{
+  const shim=join(base,'shim-bin','broker');
+  writeFileSync(shim,'#!/bin/sh\nexit 1\n');
+  chmodSync(shim,0o755);
+  const r=call();
+  assert.equal(r.status,1,'no prompt when the broker cannot report a generation');
+  assert.ok(!existsSync(slog),'no credential prompt');
+  assert.ok(!existsSync(join(state,'locked')),'no locked flag');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
 test('absent broker (legacy image) does not block the lock',()=>{
  const {base,env,slog,call}=setup();
  try{
