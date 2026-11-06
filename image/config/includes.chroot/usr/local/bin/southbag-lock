@@ -29,24 +29,20 @@ pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 # OK return is the prerequisite for the prompt. A failed barrier fails
 # closed: no prompt, no locked flag, the session stays as it was - denial
 # of the lock at worst, never credential entry with capture still live.
-# A broker that is present but unreadable fails closed the same way; only
-# an absent broker (no worker can be brokered) is skipped.
+#
+# This image is broker-integrated, so every missing, unreadable,
+# non-runnable, or zero piece of broker state is a denial. Never-begun can
+# never be inferred from absence: a lost generation record, a crashed
+# broker oneshot, or a deleted broker executable reads exactly like a clean
+# never-begun while a capture-capable worker may still be live. Only a
+# future root-owned, explicit disabled-mode control path with proven
+# no-worker/cgroup-empty preconditions may relax any of these denials.
 broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/sbin/southbag-input-broker}
-broker_state=${SOUTHBAG_BROKER_STATE:-/run/southbag-input-broker}
-if [ -x "$broker" ]; then
- gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
- [ -n "$gen" ] || exit 1
- if [ "$gen" != 0 ]; then
-  "$broker" inhibit "$gen" || exit 1
- fi
-elif [ -e "$broker_state/generation" ]; then
- # A broker that cannot run cannot stop the worker or prove it stopped. Only
- # a recorded generation of 0 positively establishes that no worker was ever
- # brokered; a begun generation or an unreadable record can hide a live
- # worker, so the lock fails closed (no prompt, no locked flag).
- gen=$(cat "$broker_state/generation" 2>/dev/null || printf 'unknown\n')
- [ "$gen" = 0 ] || exit 1
-fi
+[ -x "$broker" ] || exit 1
+gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
+[ -n "$gen" ] || exit 1
+[ "$gen" != 0 ] || exit 1
+"$broker" inhibit "$gen" || exit 1
 
 mkdir -p "$state"
 : > "$state/locked"
