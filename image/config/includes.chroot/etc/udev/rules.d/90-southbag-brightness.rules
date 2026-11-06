@@ -1,0 +1,10 @@
+# Keeps display backlights pinned at maximum.
+#
+# Runs on "add" (boot coldplug, driver load, hotplug) and on "change"
+# (anything lowering the brightness, and the kernel restoring a different
+# brightness across suspend). The helper no-ops on a device already at
+# maximum, so the change event raised by its own write does not loop.
+#
+# The helper is invoked through sh: this file ships via includes.chroot,
+# which does not preserve an executable bit on the helper.
+ACTION=="add|change", SUBSYSTEM=="backlight", RUN+="/bin/sh /usr/local/bin/southbag-brightness-max"

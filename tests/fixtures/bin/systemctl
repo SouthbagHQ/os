@@ -1,0 +1,36 @@
+#!/bin/sh
+# Host-test stand-in for the systemctl --user verbs southbag-device-session uses.
+state=${FAKE_SYSTEMD_STATE:?}
+cgroot=${SOUTHBAG_DEVICE_CGROUP_ROOT:?}
+[ "${1:-}" = "--user" ] && shift
+cmd=${1:-}; shift || true
+unit=
+for a in "$@"; do case "$a" in *.scope) unit=$a ;; esac; done
+pid_alive() { [ -f "$state/units/$1.pid" ] && kill -0 "$(cat "$state/units/$1.pid")" 2>/dev/null; }
+case "$cmd" in
+ show)
+  if [ -f "$state/units/$unit.pid" ]; then printf '/units/%s\n' "$unit"; fi
+  ;;
+ is-active)
+  pid_alive "$unit"
+  ;;
+ stop)
+  if [ -e "$state/hang-stop" ]; then sleep 60; exit 0; fi
+  if pid_alive "$unit"; then
+   pid=$(cat "$state/units/$unit.pid")
+   kill -TERM "$pid" 2>/dev/null || true
+   sleep .1
+   kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$state/units/$unit.pid"
+  printf 'populated 0\nfrozen 0\n' >"$cgroot/units/$unit/cgroup.events"
+  ;;
+ list-units)
+  for f in "$state"/units/*.pid; do
+   [ -e "$f" ] || continue
+   u=$(basename "$f" .pid)
+   pid_alive "$u" && printf '%s loaded active running fake\n' "$u"
+  done
+  ;;
+ *) exit 2 ;;
+esac

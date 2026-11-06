@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+[ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] && [ "${REQUEST_METHOD:-}" = "POST" ] || { printf 'Status: 403\r\n\r\n'; exit 0; }
+case "${QUERY_STRING:-}" in
+ generation)
+  file="$HOME/.local/share/southbag/device-session/generation"
+  [ -f "$file" ] || { printf 'Status: 503\r\n\r\n'; exit 0; }
+  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+  jq -Rn --arg g "$(cat "$file")" '{generation:$g}'
+  ;;
+ reset)
+  len=${CONTENT_LENGTH:-0}
+  [ "$len" -gt 0 ] && [ "$len" -lt 1024 ] || { printf 'Status: 400\r\n\r\n'; exit 0; }
+  generation=$(dd bs=1 count="$len" 2>/dev/null | jq -r '.generation // empty')
+  /usr/local/bin/southbag-device-session reset "$generation" || { printf 'Status: 503\r\n\r\n'; exit 0; }
+  printf 'Status: 204\r\nCache-Control: no-store\r\n\r\n'
+  ;;
+ *) printf 'Status: 400\r\n\r\n' ;;
+esac

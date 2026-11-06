@@ -1,0 +1,26 @@
+#!/bin/sh
+# Locks the session.
+#
+# The shell is a web page and cannot start processes, so - like /cgi-bin/
+# launch - this is the seam. Origin-checked the same way /cgi-bin/account
+# is: only the shell's own origin may ask, not a service site open in an
+# app window. (This boundary is against web content; a process running as
+# the session user can already signal swaylock directly, like everything
+# else on a kiosk session.) southbag-lock itself decides: it engages even
+# offline - unlock fails closed then - and refuses only when no account is
+# signed in, which the customer sees here as a 409.
+set -eu
+
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+
+if [ "${HTTP_ORIGIN:-}" != "http://127.0.0.1:8080" ]; then
+ printf 'Status: 403\r\nContent-Type: text/plain\r\n\r\nshell only\r\n'
+ exit 0
+fi
+
+[ -r "$state/account" ] || {
+ printf 'Status: 409\r\nContent-Type: text/plain\r\n\r\nno signed-in account to lock for\r\n'
+ exit 0; }
+
+setsid /usr/local/bin/southbag-lock >/dev/null 2>&1 < /dev/null &
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"locking":true}'

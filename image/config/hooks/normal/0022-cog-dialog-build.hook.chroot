@@ -1,0 +1,75 @@
+#!/bin/sh
+# Rebuilds cog 0.18.4 with Southbag's wayland script-dialog support
+# (image/cog-dialogs/0001-wayland-script-dialogs.patch) inside the chroot,
+# then removes the toolchain and sources, following 0016's exact-dpkg-delta
+# purge: the image ships patched binaries, not a compiler.
+#
+# What ships:
+#   - /usr/bin/cog replaced by the patched build (stock kept as
+#     /usr/bin/cog.stock via dpkg-divert, so southbag-shell's verbatim
+#     "/usr/bin/cog --platform=wl ..." invocation picks up the patch)
+#   - the stock wayland platform module replaced the same way
+#   - cogctl and everything else from the cog package stay stock
+#
+# Version note: libwpewebkit-2.0-dev must match the installed runtime; if
+# the trixie archive has moved ahead, apt upgrades the runtime alongside
+# (upgrades are not in the install delta and are not purged). The build
+# targets whatever WPE WebKit is in the image at build time.
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+# Runtime libraries cog links against must survive the purge below: they
+# are installed before this hook (package list / cog deps), so they stay
+# out of the snapshot delta; marking them manual is belt and braces for
+# the ones the -dev packages would otherwise drag in.
+apt-mark manual libwpewebkit-2.0-1 libwpe-1.0-1 \
+ libwayland-client0 libwayland-egl1 libwayland-cursor0 \
+ libxkbcommon0 libcairo2 libglib2.0-0t64 libsoup-3.0-0 libepoxy0 \
+ libfontconfig1 libfreetype6 libpixman-1-0 libharfbuzz0b 2>/dev/null || true
+
+dpkg-query -W -f='${Package}\n' | sort > /tmp/.pkgs-before
+apt-get install -y --no-install-recommends \
+ build-essential meson ninja-build pkg-config patch ca-certificates wget \
+ libwpewebkit-2.0-dev libwpebackend-fdo-1.0-dev libmanette-0.2-dev \
+ libwayland-dev wayland-protocols \
+ libxkbcommon-dev libcairo2-dev libepoxy-dev
+dpkg-query -W -f='${Package}\n' | sort > /tmp/.pkgs-after
+# Everything the install added - the toolchain included - by exact name.
+added=$(comm -13 /tmp/.pkgs-before /tmp/.pkgs-after)
+
+mkdir -p /opt/cog-dialog-build
+cd /opt/cog-dialog-build
+wget -q https://github.com/Igalia/cog/releases/download/0.18.4/cog-0.18.4.tar.xz
+echo '31d7079db2eeed790899d2f1f824dd6a54bf30d072d196d737be572f105d99b1  cog-0.18.4.tar.xz' | sha256sum -c -
+tar xf cog-0.18.4.tar.xz
+cd cog-0.18.4
+patch -p1 < /opt/cog-dialog.patch
+
+# The stock wl platform module path, resolved from the installed package.
+modpath=$(dpkg -L cog | grep -m1 'cogplatform-wl\.so$')
+moddir=$(dirname "$modpath")
+
+meson setup build \
+ -Dplatforms=wayland \
+ -Dplugin_path="$moddir" \
+ --prefix=/usr
+ninja -C build
+
+# Swap in the patched binaries with dpkg-divert so package management
+# keeps its original files under .stock names.
+dpkg-divert --list /usr/bin/cog | grep -q . || \
+ dpkg-divert --add --rename --divert /usr/bin/cog.stock /usr/bin/cog
+cp build/launcher/cog /usr/bin/cog
+chmod 755 /usr/bin/cog
+dpkg-divert --list "$modpath" | grep -q . || \
+ dpkg-divert --add --rename --divert "$modpath.stock" "$modpath"
+cp build/platform/wayland/libcogplatform-wl.so "$modpath"
+chmod 644 "$modpath"
+
+cd /
+rm -rf /opt/cog-dialog-build /opt/cog-dialog.patch
+# Purge exactly what this hook installed, not a guessed package list.
+apt-get purge -y $added
+rm -f /tmp/.pkgs-before /tmp/.pkgs-after
+apt-get clean

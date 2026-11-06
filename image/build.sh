@@ -14,6 +14,13 @@ if [[ ! -d "$repo/dist-device" ]]; then
   exit 1
 fi
 
+# Set to a Southbag Browser release tag to include the standalone browser in
+# the image (website apps then open as its app windows; see
+# config/hooks/normal/0025-southbag-browser.hook.chroot). Must be a release
+# that contains app windows — v1.0.0 predates them. Empty keeps the image
+# cog-only.
+SOUTHBAG_BROWSER_VERSION=""
+
 # The shell is ordinary files on disk, served over loopback at boot. This
 # directory is generated, so anything hand-written that belongs beside the
 # bundle — the launcher CGI — is kept in shell-extra and copied in after.
@@ -22,7 +29,36 @@ rm -rf "$served"
 mkdir -p "$served"
 cp -R "$repo/dist-device/." "$served/"
 cp -R "$here/shell-extra/." "$served/"
-chmod +x "$served/cgi-bin/launch"
+# Executable bits, set explicitly rather than trusted to the checkout: the
+# device runs these as CGI, and git modes survive neither every checkout nor
+# every web flow that can land these files.
+chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth" \
+  "$served/cgi-bin/lock" "$served/cgi-bin/account" "$served/cgi-bin/device-session"
+
+# live-build executes hooks straight from this tree, so every hook's
+# executable bit matters here — set them all, don't trust the checkout.
+for hook in "$here"/config/hooks/normal/*.hook.*; do
+  [[ -f "$hook" ]] && chmod +x "$hook"
+done
+
+# Same story for the lock helpers shipped via includes.chroot: web flows
+# land files as 644 and the lock is useless if these are not executable.
+chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-device-session"
+chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-shell"
+chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-lock" \
+  "$here/config/includes.chroot/usr/local/bin/southbag-unlock" \
+  "$here/config/includes.chroot/usr/local/bin/southbag-face-unlock"
+# Test fixtures are executed directly by the suite via PATH; same web-flow
+# 644 hazard, so cover them here as well.
+chmod +x "$repo/tests/fixtures/bin/systemctl" "$repo/tests/fixtures/bin/systemd-run" 2>/dev/null || true
+
+# Hand the browser pin to the chroot hook (or remove a stale one).
+pin="$here/config/includes.chroot/etc/default/southbag-browser"
+rm -f "$pin"
+if [[ -n "$SOUTHBAG_BROWSER_VERSION" ]]; then
+  mkdir -p "$(dirname "$pin")"
+  printf '%s' "$SOUTHBAG_BROWSER_VERSION" > "$pin"
+fi
 
 docker run --rm --privileged \
   -v "$here:/image" -w /image \

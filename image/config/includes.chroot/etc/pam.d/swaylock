@@ -1,0 +1,8 @@
+# Southbag OS: the account is the device. Unlock is an online re-auth
+# against Southbag Identity - there is no local password to fall back to
+# and no offline path. pam_exec hands the typed secret to the helper on
+# stdin (expose_authtok); it never touches argv, logs or disk. Any failure
+# - wrong password, wrong account, unreachable Identity, expired two-factor
+# state - leaves the session locked.
+auth    required        pam_exec.so expose_authtok quiet /usr/local/bin/southbag-unlock
+account required        pam_permit.so

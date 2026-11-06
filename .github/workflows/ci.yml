@@ -13,6 +13,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run check
-      - run: bun test
+      # The deadline-driven device-session contract tests exceed bun's 5s
+      # default per-test timeout; bunfig has no timeout key (oven-sh/bun#7789),
+      # so set it on the command line here.
+      - run: bun test --timeout 30000
       # Fails the job when a bucket in budget.json is exceeded.
       - run: bun run build
