@@ -37,7 +37,7 @@ pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 # never-begun while a capture-capable worker may still be live. Only a
 # future root-owned, explicit disabled-mode control path with proven
 # no-worker/cgroup-empty preconditions may relax any of these denials.
-broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/sbin/southbag-input-broker}
+broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/bin/southbag-input-client}
 [ -x "$broker" ] || exit 1
 gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
 [ -n "$gen" ] || exit 1
