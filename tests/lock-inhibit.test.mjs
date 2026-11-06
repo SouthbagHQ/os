@@ -18,6 +18,10 @@ function setup(){
  const shim=join(base,'shim-bin');
  for(const d of [state,bstate,join(fake,'units'),join(cgroot,'units'),shim]) mkdirSync(d,{recursive:true});
  writeFileSync(join(shim,'systemctl'),readFileSync(join(fixtures,'systemctl')));
+ // The broker is exercised as an executable: copy it beside the shims and
+ // chmod it, so the test does not depend on the git checkout's exec bit.
+ writeFileSync(join(shim,'broker'),readFileSync(broker));
+ chmodSync(join(shim,'broker'),0o755);
  const surface=join(shim,'surface');
  writeFileSync(surface,'#!/bin/sh\necho invoked >>"$SURFACE_LOG"\n');
  chmodSync(join(shim,'systemctl'),0o755);
@@ -26,7 +30,7 @@ function setup(){
  const slog=join(base,'surface.log');
  const env={...process.env,
   SOUTHBAG_STATE_DIR:state,
-  SOUTHBAG_LOCK_BROKER:broker,
+  SOUTHBAG_LOCK_BROKER:join(shim,'broker'),
   SOUTHBAG_LOCK_SURFACE:surface,
   SURFACE_LOG:slog,
   SOUTHBAG_BROKER_SYSTEMCTL:join(shim,'systemctl'),
