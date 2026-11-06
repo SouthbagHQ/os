@@ -80,6 +80,11 @@ jobs:
           for p in \
             image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c \
             image/config/includes.chroot/opt/southbag-lockd-src/southbag-face-capture.c \
+            image/config/includes.chroot/opt/southbag-broker-src/southbag-input-client.c \
+            image/config/includes.chroot/usr/local/sbin/southbag-input-broker \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker.service \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker.socket \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker@.service \
             image/config/includes.chroot/usr/local/bin/southbag-lock \
             image/config/includes.chroot/usr/local/bin/southbag-unlock \
             image/config/includes.chroot/usr/local/bin/southbag-face-unlock \
