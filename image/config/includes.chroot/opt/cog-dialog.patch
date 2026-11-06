@@ -311,7 +311,7 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-platform-wl.c b/pla
 diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c b/platform/wayland/cog-script-dialog-wl.c
 --- a/platform/wayland/cog-script-dialog-wl.c	1970-01-01 10:00:00.000000000 +1000
 +++ b/platform/wayland/cog-script-dialog-wl.c	2026-11-06 04:56:18.844251408 +1100
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,339 @@
 +/*
 + * cog-script-dialog-wl.c
 + * Southbag: rendered, actionable script dialogs for the wayland platform.
@@ -379,10 +379,12 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    int num_buttons;
 +    int focused_button;
 +
++    GPtrArray *pages; /* offsets into the dialog-owned message */
++    unsigned page;
 +    bool answered;
 +};
 +
-+static void
++static const char *
 +wrap_message(cairo_t *cr, const char *text, char lines[][96], int *n_lines)
 +{
 +    /* Measure the same font used to paint, preserving UTF-8 boundaries. */
@@ -419,26 +421,8 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +        }
 +        col += len; p = next;
 +    }
-+    /* Eight-line v1 remains bounded: disclose omitted content explicitly. */
-+    if (*p) {
-+        const char *suffix = "... [more]";
-+        while (col + strlen(suffix) >= 96) {
-+            char *prev = g_utf8_find_prev_char(lines[line], lines[line] + col);
-+            col = prev ? prev - lines[line] : 0;
-+        }
-+        for (;;) {
-+            strcpy(lines[line] + col, suffix);
-+            cairo_text_extents_t ext;
-+            cairo_text_extents(cr, lines[line], &ext);
-+            if (col + strlen(suffix) < 96 &&
-+                ext.x_advance <= DIALOG_WIDTH - 2 * DIALOG_PADDING)
-+                break;
-+            if (!col) break;
-+            char *prev = g_utf8_find_prev_char(lines[line], lines[line] + col);
-+            col = prev ? prev - lines[line] : 0;
-+        }
-+    }
 +    *n_lines = line + 1;
++    return p;
 +}
 +
 +static void
@@ -463,14 +447,23 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    /* message */
 +    char lines[MESSAGE_MAX_LINES][96];
 +    int n_lines = 0;
-+    const char *msg = webkit_script_dialog_get_message(sd->dialog);
-+    wrap_message(sd->cr, msg ? msg : "", lines, &n_lines);
++    wrap_message(sd->cr, g_ptr_array_index(sd->pages, sd->page), lines, &n_lines);
 +    cairo_set_font_size(sd->cr, MESSAGE_TEXT_SIZE);
 +    cairo_set_source_rgba(sd->cr, 0, 0, 0, 1);
 +    for (int i = 0; i < n_lines; i++) {
 +        cairo_move_to(sd->cr, DIALOG_PADDING, DIALOG_PADDING + MESSAGE_LINE_HEIGHT * (i + 1) - 6);
 +        cairo_show_text(sd->cr, lines[i]);
 +    }
++
++    if (sd->pages->len > 1) {
++        char footer[80];
++        g_snprintf(footer, sizeof footer, "Page %u/%u (Page Up / Page Down)",
++                   sd->page + 1, sd->pages->len);
++        cairo_move_to(sd->cr, DIALOG_PADDING,
++                      DIALOG_PADDING + MESSAGE_LINE_HEIGHT * (MESSAGE_MAX_LINES + 1) - 6);
++        cairo_show_text(sd->cr, footer);
++    }
++    sd->buttons[0].label = sd->page + 1 < sd->pages->len ? "Next page" : "OK";
 +
 +    /* buttons */
 +    for (int i = 0; i < sd->num_buttons; i++) {
@@ -522,7 +515,16 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    const char *msg = webkit_script_dialog_get_message(dialog);
 +    cairo_surface_t *measure_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
 +    cairo_t *measure = cairo_create(measure_surface);
-+    wrap_message(measure, msg ? msg : "", lines, &n_lines);
++    sd->pages = g_ptr_array_new();
++    const char *cursor = msg ? msg : "";
++    do {
++        g_ptr_array_add(sd->pages, (gpointer) cursor);
++        const char *next = wrap_message(measure, cursor, lines, &n_lines);
++        if (!*next || next <= cursor) break;
++        cursor = next;
++    } while (true);
++    if (sd->pages->len > 1)
++        n_lines = MESSAGE_MAX_LINES + 1;
 +    cairo_destroy(measure);
 +    cairo_surface_destroy(measure_surface);
 +
@@ -582,6 +584,7 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    g_clear_pointer(&sd->shm_pool, wl_shm_pool_destroy);
 +    munmap(sd->shm_pool_data, sd->shm_pool_size);
 +    close(sd->shm_pool_fd);
++    g_ptr_array_unref(sd->pages);
 +    webkit_script_dialog_unref(sd->dialog);
 +    g_free(sd);
 +}
@@ -603,6 +606,10 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +    for (int i = 0; i < sd->num_buttons; i++) {
 +        if (lx >= sd->buttons[i].x && lx < sd->buttons[i].x + sd->buttons[i].w &&
 +            ly >= sd->buttons[i].y && ly < sd->buttons[i].y + sd->buttons[i].h) {
++            if (i == 0 && sd->page + 1 < sd->pages->len) {
++                sd->page++;
++                return false;
++            }
 +            answer(sd, !sd->buttons[i].is_cancel);
 +            return true;
 +        }
@@ -620,8 +627,18 @@ diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c 
 +        if (sd->num_buttons > 1)
 +            sd->focused_button = (sd->focused_button + 1) % sd->num_buttons;
 +        return false;
++    case XKB_KEY_Page_Up:
++        if (sd->page) sd->page--;
++        return false;
++    case XKB_KEY_Page_Down:
++        if (sd->page + 1 < sd->pages->len) sd->page++;
++        return false;
 +    case XKB_KEY_Return:
 +    case XKB_KEY_KP_Enter:
++        if (!sd->buttons[sd->focused_button].is_cancel && sd->page + 1 < sd->pages->len) {
++            sd->page++;
++            return false;
++        }
 +        answer(sd, !sd->buttons[sd->focused_button].is_cancel);
 +        return true;
 +    case XKB_KEY_Escape:
