@@ -41,7 +41,7 @@ test('login captures the era, the binding carries it, logout names it and never 
   await mod.logout();
   assert.deepEqual(requests, [
     'genfetch',                                       // era captured at login, once
-    { accessToken: 'test', generation: 'g1' },        // binding write carries the era
+    { accessToken: 'test', generation: 'g1', expectedSubject: 'test' },        // binding write carries the era
     { clear: true, generation: 'g1' },                // clear names the same era
     { generation: 'g1' },                             // reset names the login-time era
   ]);
@@ -58,9 +58,9 @@ test('logout waits for pending binding and cleanup before forgetting session', a
   let done = false;
   const out = mod.logout().then(() => { done=true; });
   await flush();
-  assert.equal(done, false); assert.equal(requests.length, 2); assert.equal(local.size, 2);
+  assert.equal(done, false); assert.equal(requests.length, 2); assert.equal(local.size, 0);
   release(); await out;
-  assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1' }, { clear: true, generation: 'g1' }, { generation: 'g1' }]);
+  assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }, { generation: 'g1' }]);
   assert.equal(local.size, 0);
 });
 
@@ -82,12 +82,12 @@ test('reset refusal: binding already cleared, local session retained for retry (
   // may already be stopped manager-side, and only the local UI session and
   // its login-time era survive for the retry.
   const { requests, fetcher } = recorder((url, body) =>
-    body && 'generation' in body && !body.clear ? { ok: false, json: async () => ({}) } : okAll());
+    url.includes('device-session?reset') ? { ok: false, json: async () => ({}) } : okAll());
   const { mod, local } = await load(fetcher);
   mod.storeSession(fixture);
   await assert.rejects(mod.logout(), /cleanup failed/);
   assert.deepEqual(requests, [
-    'genfetch', { accessToken: 'test', generation: 'g1' }, { clear: true, generation: 'g1' }, { generation: 'g1' },
+    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }, { generation: 'g1' },
   ]);
   assert.equal(local.size, 2); // session + era retained; binding already gone server-side
   const second = recorder(okAll);
@@ -97,37 +97,23 @@ test('reset refusal: binding already cleared, local session retained for retry (
   assert.equal(local.size, 0);
 });
 
-test('same-era re-login during logout: writes carry the real era values, reset names it once', async () => {
-  // A late sign-in completing mid-logout chains its generation fetch and
-  // binding write after the clear. Within one page lifetime the era cannot
-  // rotate (only a reset rotates, and it kills this renderer), so both
-  // logins capture the same g1 and the reset still names g1 - the retired-
-  // era refusal itself is fenced CGI-side (tests/account.test.mjs).
+test('re-login during logout is refused before any new generation or binding request', async () => {
   let releaseClear;
   const { requests, fetcher } = recorder((url, body) => {
     if (body?.clear) return new Promise(resolve => { releaseClear = () => resolve(okAll()); });
     return okAll();
   });
   const { mod, local } = await load(fetcher);
-  mod.storeSession(fixture);
+  await mod.storeSession(fixture);
   const out = mod.logout();
   await flush();
-  mod.storeSession({ ...fixture, accessToken: 'tok2' }); // late callback completes mid-logout
+  await assert.rejects(mod.storeSession({ ...fixture, accessToken: 'tok2' }), /sign-out is in progress/);
   releaseClear(); await out;
-  // Issue order: the clear is in flight while the late login chain starts, and
-  // once the clear resolves the RESET is issued before the late binding
-  // completes. This is the cross-boundary race the fence exists for: the late
-  // binding names era g1, but the reset is already wiping/rotating that era -
-  // CGI-side the fence re-checks the generation under the lock and rejects the
-  // write as retired instead of recreating the note (tests/account.test.mjs).
   assert.deepEqual(requests, [
-    'genfetch', { accessToken: 'test', generation: 'g1' },
-    { clear: true, generation: 'g1' },
-    'genfetch',
-    { generation: 'g1' },                             // reset races ahead of the late binding
-    { accessToken: 'tok2', generation: 'g1' },        // retired-era write: fence rejects
+    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' },
+    { clear: true, generation: 'g1' }, { generation: 'g1' },
   ]);
-  assert.equal(local.size, 0); // reset wiped the era the late login belonged to
+  assert.equal(local.size, 0);
 });
 
 test('missing era binding fails closed before any write', async () => {
@@ -137,4 +123,43 @@ test('missing era binding fails closed before any write', async () => {
   await assert.rejects(mod.logout(), /generation is unknown/);
   assert.deepEqual(requests, []); // no clear, no reset: nothing is touched
   assert.equal(local.size, 1); // session retained
+});
+
+for (const status of [409, 502]) {
+  test(`binding refusal ${status} cannot leave a newly stored session or era`, async () => {
+    const { requests, fetcher } = recorder(() => ({ ok: false, status }));
+    const { mod, local } = await load(fetcher);
+    await assert.rejects(mod.storeSession(fixture), /Account binding failed/);
+    assert.equal(local.size, 0);
+    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }]);
+  });
+}
+test('unavailable generation cannot store a session or call account', async () => {
+  let count = 0;
+  const { mod, local } = await load(async () => { count++; return { ok: false }; });
+  await assert.rejects(mod.storeSession(fixture), /state unavailable/);
+  assert.equal(local.size, 0); assert.equal(count, 1);
+});
+for (const cleanupOK of [true, false]) {
+  test(`storage failure after binding removes local partial state, cleanup=${cleanupOK}`, async () => {
+    const { requests, fetcher } = recorder((url, body) => ({ ok: !body?.clear || cleanupOK }));
+    const { mod, local } = await load(fetcher);
+    const set = globalThis.localStorage.setItem;
+    globalThis.localStorage.setItem = (k,v) => {
+      if(k === 'southbag.session') throw new Error('fixture quota');
+      return set(k,v);
+    };
+    await assert.rejects(mod.storeSession(fixture), cleanupOK ? /Sign-in was not saved/ : /recovery is needed/);
+    assert.equal(local.size, 0);
+    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }]);
+  });
+}
+
+test('failed storage and unavailable cleanup reports recovery, without hiding the cleanup error', async () => {
+  const { requests, fetcher } = recorder((url, body) => { if(body?.clear) throw new Error('fixture offline'); return okAll(); });
+  const { mod, local } = await load(fetcher);
+  globalThis.localStorage.setItem = () => { throw new Error('fixture storage denied'); };
+  await assert.rejects(mod.storeSession(fixture), /recovery is needed/);
+  assert.equal(local.size, 0);
+  assert.equal(requests.at(-1).clear, true);
 });
