@@ -163,3 +163,43 @@ test('a new generation inhibits first: a fresh session never inherits a running 
   assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'inhibited');
  }finally{rmSync(base,{recursive:true,force:true})}
 });
+
+test('first status and show adapter hangs are bounded before readiness',()=>{
+ for(const verb of ['is-active','show']){
+  const {base,state,env}=setup();
+  try{
+   writeFileSync(join(state,'generation'),'7\n');
+   const adapter=join(base,'bounded-adapter');
+   writeFileSync(adapter,`#!/bin/sh\nif [ "$1" = "${verb}" ]; then sleep 30; fi\n[ "$1" = is-active ] && exit 3\nexit 0\n`);chmodSync(adapter,0o755);
+   const start=Date.now();
+   const r=spawnSync('sh',[broker,'inhibit','7'],{env:{...env,SOUTHBAG_BROKER_SYSTEMCTL:adapter,SOUTHBAG_BROKER_STOP_DEADLINE:'1'},encoding:'utf8',timeout:5000});
+   assert.notEqual(r.status,0);assert.equal(r.error,undefined);
+   assert.ok(Date.now()-start<2500,'adapter hang exceeded one global budget');
+   assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'failed');
+  }finally{rmSync(base,{recursive:true,force:true})}
+ }
+});
+
+test('initial inactive does not skip final active recheck',()=>{
+ const {base,state,env}=setup();
+ try{
+  writeFileSync(join(state,'generation'),'7\n');
+  const adapter=join(base,'reappear-adapter'),count=join(base,'count');
+  writeFileSync(adapter,`#!/bin/sh\ncase "$1" in\nis-active) n=$(cat '${count}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" >'${count}'; [ "$n" -gt 1 ] && exit 0; exit 3;;\nshow) printf '\\n'; exit 0;;\n*) exit 99;;\nesac\n`);chmodSync(adapter,0o755);
+  const r=spawnSync('sh',[broker,'inhibit','7'],{env:{...env,SOUTHBAG_BROKER_SYSTEMCTL:adapter},encoding:'utf8',timeout:5000});
+  assert.notEqual(r.status,0);assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'failed');
+  assert.equal(readFileSync(count,'utf8').trim(),'2');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+
+test('successive slow probes consume one budget rather than each getting a fresh timeout',()=>{
+ const {base,state,env}=setup();
+ try{
+  writeFileSync(join(state,'generation'),'7\n');const adapter=join(base,'slow-adapter');
+  writeFileSync(adapter,'#!/bin/sh\nsleep .4\n[ "$1" = is-active ] && exit 3\nexit 0\n');chmodSync(adapter,0o755);
+  const start=Date.now();
+  const r=spawnSync('sh',[broker,'inhibit','7'],{env:{...env,SOUTHBAG_BROKER_SYSTEMCTL:adapter,SOUTHBAG_BROKER_STOP_DEADLINE:'1'},encoding:'utf8',timeout:5000});
+  assert.notEqual(r.status,0);assert.equal(r.error,undefined);assert.ok(Date.now()-start<1800);
+  assert.equal(readFileSync(join(state,'state'),'utf8').trim(),'failed');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
