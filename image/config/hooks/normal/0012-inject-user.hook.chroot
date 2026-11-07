@@ -6,9 +6,17 @@ if ! getent passwd southbag-inject >/dev/null; then
 fi
 uid=$(id -u southbag-inject)
 gid=$(id -g southbag-inject)
-[ "$uid" -gt 0 ] && [ "$uid" -lt 1000 ]
-[ "$gid" -gt 0 ] && [ "$gid" -lt 1000 ]
-[ "$uid" != "$(id -u customer)" ] && [ "$gid" != "$(id -g customer)" ]
+customer_uid=$(id -u customer)
+customer_gid=$(id -g customer)
+if ! { [ "$uid" -gt 0 ] && [ "$uid" -lt 1000 ]; }; then
+ echo "Refusing non-system worker uid" >&2; exit 1
+fi
+if ! { [ "$gid" -gt 0 ] && [ "$gid" -lt 1000 ]; }; then
+ echo "Refusing non-system worker gid" >&2; exit 1
+fi
+if [ "$uid" = "$customer_uid" ] || [ "$gid" = "$customer_gid" ]; then
+ echo "Refusing shared customer identity" >&2; exit 1
+fi
 [ "$(getent passwd southbag-inject | cut -d: -f6)" = /var/lib/southbag-inject ]
 [ "$(getent passwd southbag-inject | cut -d: -f7)" = /usr/sbin/nologin ]
 [ "$(id -Gn southbag-inject)" = southbag-inject ]
