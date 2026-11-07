@@ -3,6 +3,10 @@
 This is provisioning work, not permission to activate a keyboard reader.
 The canonical unit is southbag-espanso.service, matching the stop-only broker.
 It uses a dedicated system uid/group with nologin and no additional groups.
+The package validates any existing identity before unpacking, then creates and
+validates a missing identity at configuration time. Explicit shell branches
+reject root/ordinary/customer ids, missing customer and unsafe account posture;
+the check does not rely on set -e behavior inside an AND-list.
 Its condition is unconditionally false, it has no enablement section, and it
 has neither cgroup device allow entries nor input/uinput DAC grants. Rules
 are empty. The customer/compositor keeps its existing device access.
