@@ -320,7 +320,7 @@ export async function completeLogin(): Promise<Session | null> {
     expiresAt: Date.now() + (typeof body.expires_in === "number" ? body.expires_in : 3600) * 1000,
     scope: body.scope ?? SCOPES,
   };
-  storeSession(session);
+  await storeSession(session);
   history.replaceState(null, "", pending.redirect);
   return session;
 }
