@@ -35,38 +35,12 @@ const GENERATION_KEY = "southbag.device-generation";
 const onDevice = import.meta.env.MODE === "device";
 
 /**
- * Tells the device who is signed in so the session lock can demand that same
- * account's password. The CGI re-verifies the token with Identity and records
- * what the server answers - the page's word is never what gets written.
- * Fire-and-forget: if the note does not land, the lock simply refuses to
- * engage rather than locking for the wrong account.
+ * Serialize sign-in storage and sign-out cleanup. A DEVICE callback is not
+ * complete until the independently verified userinfo identity matches the
+ * signed ID-token subject and the current generation has been bound.
  */
 let accountUpdate: Promise<void> = Promise.resolve();
-
-function recordAccount(accessToken: string): void {
-  if (!onDevice) return;
-  accountUpdate = accountUpdate.catch(() => {}).then(async () => {
-    // Bind this session's era at login time: the generation a later sign-out
-    // must name. Capturing it here, not at sign-out, is what stops a stale
-    // page from an earlier session era fetching the CURRENT generation and
-    // wiping a replacement session's state with it. The binding write then
-    // carries the era and the account CGI re-checks it under the manager's
-    // lock, so a late sign-in completing during teardown is rejected as a
-    // retired era instead of recreating the note after a reset removed it.
-    const current = await fetch("/cgi-bin/device-session?generation", { method: "POST" });
-    if (!current.ok) throw new Error("Device session state unavailable");
-    const { generation } = (await current.json()) as { generation: string };
-    localStorage.setItem(GENERATION_KEY, generation);
-    const response = await fetch("/cgi-bin/account", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken, generation }),
-    });
-    if (!response.ok) throw new Error("Account binding failed");
-  });
-  // Keep rejection handled until logout joins this operation.
-  void accountUpdate.catch(() => {});
-}
+let signingOut = false;
 
 async function clearAccount(generation: string): Promise<void> {
   if (!onDevice) return;
@@ -96,13 +70,48 @@ export function currentSession(): Session | null {
   }
 }
 
-export function storeSession(session: Session): void {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    recordAccount(session.accessToken);
-  } catch {
-    /* A device with no writable storage cannot stay signed in. */
-  }
+export function storeSession(session: Session): Promise<void> {
+  if (signingOut) return Promise.reject(new Error("Device sign-out is in progress. Try signing in afterward."));
+  const update = accountUpdate.catch(() => {}).then(async () => {
+    const serialized = JSON.stringify(session);
+    if (!onDevice) {
+      localStorage.setItem(SESSION_KEY, serialized);
+      return;
+    }
+    const current = await fetch("/cgi-bin/device-session?generation", { method: "POST" });
+    if (!current.ok) throw new Error("Device session state unavailable. Try signing in again.");
+    const { generation } = (await current.json()) as { generation: string };
+    if (typeof generation !== "string" || !generation) throw new Error("Device session generation missing.");
+    const response = await fetch("/cgi-bin/account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // expectedSubject is a consistency fence, never the binding authority.
+      // The CGI independently verifies accessToken and writes only userinfo.
+      body: JSON.stringify({ accessToken: session.accessToken, generation, expectedSubject: session.customer.sub }),
+    });
+    if (!response.ok) throw new Error("Account binding failed. Try signing in again.");
+    try {
+      localStorage.setItem(GENERATION_KEY, generation);
+      localStorage.setItem(SESSION_KEY, serialized);
+    } catch {
+      // No successful callback or readable partial session after storage fails.
+      let storageCleared = true;
+      try {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(GENERATION_KEY);
+      } catch { storageCleared = false; }
+      const cleanup = await fetch("/cgi-bin/account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear: true, generation }),
+      }).catch(() => null);
+      if (!storageCleared || !cleanup?.ok) throw new Error("Session storage failed and account cleanup failed. Device recovery is needed.");
+      throw new Error("Session storage failed. Sign-in was not saved; try again.");
+    }
+  });
+  accountUpdate = update;
+  void update.catch(() => {});
+  return update;
 }
 
 /**
@@ -135,7 +144,7 @@ async function resetDeviceSession(generation: string): Promise<void> {
   if (!response.ok) throw new Error("Device session cleanup failed. Please try signing out again.");
 }
 
-export async function logout(): Promise<void> {
+async function performLogout(): Promise<void> {
   // Do not reload or forget the UI session until the binding is removed.
   // On failure the caller keeps the desktop open so cleanup can be retried.
   if (onDevice) {
@@ -159,6 +168,13 @@ export async function logout(): Promise<void> {
   }
   localStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem("southbag.identity.pending");
+}
+
+export async function logout(): Promise<void> {
+  if (signingOut) throw new Error("Device sign-out is already in progress.");
+  signingOut = true;
+  try { await performLogout(); }
+  finally { signingOut = false; }
 }
 
 export function firstName(customer: Customer): string {
