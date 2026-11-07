@@ -1,7 +1,10 @@
 #!/bin/sh
 # Dedicated no-login identity. Never share customer/seat/input access.
 set -eu
+check_existing=false
+case "${1:-}" in install|upgrade|--check-existing) check_existing=true ;; esac
 if ! getent passwd southbag-inject >/dev/null; then
+ [ "$check_existing" = false ] || exit 0
  adduser --system --group --home /var/lib/southbag-inject --no-create-home --disabled-password --shell /usr/sbin/nologin --gecos "" southbag-inject
 fi
 uid=$(id -u southbag-inject)
@@ -20,6 +23,7 @@ fi
 [ "$(getent passwd southbag-inject | cut -d: -f6)" = /var/lib/southbag-inject ]
 [ "$(getent passwd southbag-inject | cut -d: -f7)" = /usr/sbin/nologin ]
 [ "$(id -Gn southbag-inject)" = southbag-inject ]
+[ "$check_existing" = false ] || exit 0
 install -d -o root -g root -m 0755 /etc/southbag/espanso/packages
 # No uinput chmod/group change, keyboard ownership change, module-load rule,
 # event-device ACL, service enablement or input reader invocation.
