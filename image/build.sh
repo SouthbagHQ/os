@@ -14,6 +14,15 @@ if [[ ! -d "$repo/dist-device" ]]; then
   exit 1
 fi
 
+# Optional exact offline dormant worker artifact. Default images carry no
+# worker binary. The helper clears stale staging when the input is absent.
+if [[ -n "${SOUTHBAG_INJECT_DEB:-}" || -n "${SOUTHBAG_INJECT_SOURCE:-}" ]]; then
+  bash "$repo/packaging/stage-inject-image.sh" "${SOUTHBAG_INJECT_DEB:?}" "${SOUTHBAG_INJECT_SOURCE:?}"
+else
+  bash "$repo/packaging/stage-inject-image.sh"
+fi
+trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb"' EXIT
+
 # Set to a Southbag Browser release tag to include the standalone browser in
 # the image (website apps then open as its app windows; see
 # config/hooks/normal/0025-southbag-browser.hook.chroot). Must be a release
