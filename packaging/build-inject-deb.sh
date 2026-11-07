@@ -37,7 +37,10 @@ Description: Dormant Southbag dedicated inject-only worker candidate
 CTRL
 # Reuse the same identity contract in both package and image.
 cp "$repo/image/config/hooks/normal/0012-inject-user.hook.chroot" "$root/DEBIAN/postinst"
-chmod 755 "$root/DEBIAN/postinst"
+# dpkg runs preinst before unpack: reject unsafe pre-existing identities before
+# copying a binary/unit. Missing identity is created only at configure time.
+cp "$repo/image/config/hooks/normal/0012-inject-user.hook.chroot" "$root/DEBIAN/preinst"
+chmod 755 "$root/DEBIAN/postinst" "$root/DEBIAN/preinst"
 mkdir -p "$out"
 install -m 644 "$source" "$out/southbag-inject_2.4.1+southbag.1.minimal_source.tar.gz"
 dpkg-deb --root-owner-group --build "$root" "$out/southbag-inject_2.4.1+southbag.1.minimal_amd64.deb"
