@@ -86,4 +86,8 @@ elif name=='adduser':
      r=subprocess.run(['/bin/sh',str(ROOT/'image/config/hooks/normal/0012-inject-user.hook.chroot')],env=env,capture_output=True)
      self.assertEqual(r.returncode==0,ok,r.stderr.decode())
      self.assertEqual(marker.exists(),ok)
+     marker.unlink(missing_ok=True)
+     r=subprocess.run(['/bin/sh',str(ROOT/'image/config/hooks/normal/0012-inject-user.hook.chroot'),'install'],env=env,capture_output=True)
+     self.assertEqual(r.returncode==0,ok,r.stderr.decode())
+     self.assertFalse(marker.exists())
 if __name__=='__main__':unittest.main(verbosity=2)
