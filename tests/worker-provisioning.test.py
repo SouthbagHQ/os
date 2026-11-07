@@ -90,4 +90,21 @@ elif name=='adduser':
      r=subprocess.run(['/bin/sh',str(ROOT/'image/config/hooks/normal/0012-inject-user.hook.chroot'),'install'],env=env,capture_output=True)
      self.assertEqual(r.returncode==0,ok,r.stderr.decode())
      self.assertFalse(marker.exists())
+ def test_optional_staging_rejects_unknown_and_clears_stale(self):
+  import shutil
+  with tempfile.TemporaryDirectory() as d:
+   root=pathlib.Path(d);(root/'packaging').mkdir()
+   shutil.copy(ROOT/'packaging/stage-inject-image.sh',root/'packaging')
+   staged=root/'image/config/includes.chroot/tmp/southbag-inject-candidate.deb'
+   staged.parent.mkdir(parents=True);staged.write_text('stale')
+   r=subprocess.run(['bash',str(root/'packaging/stage-inject-image.sh')],capture_output=True)
+   self.assertEqual(r.returncode,0);self.assertFalse(staged.exists())
+   bad=root/'bad';bad.write_text('unreviewed')
+   r=subprocess.run(['bash',str(root/'packaging/stage-inject-image.sh'),str(bad),str(bad)],capture_output=True)
+   self.assertNotEqual(r.returncode,0);self.assertFalse(staged.exists())
+  hook=(ROOT/'image/config/hooks/normal/0013-inject-package.hook.chroot').read_text()
+  self.assertIn('57354fa506d2d1d5319bb43384049f32f20127d7cc2ecc6508442fe5a53a4d21',hook)
+  code='\n'.join(x for x in hook.splitlines() if not x.startswith('#'))
+  for bad in ['systemctl','modprobe','chmod','chgrp','setfacl']:
+   self.assertNotIn(bad,code)
 if __name__=='__main__':unittest.main(verbosity=2)
