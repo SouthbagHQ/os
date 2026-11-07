@@ -83,3 +83,24 @@ registration, callback, token and JWKS routes, PKCE/state/nonce checks and a
 verified stop/cgroup-empty barrier before credential UI. Prior consent denials
 remain binding: do not retry, preseed consent or bypass it. The current diagnostic
 proxy's auth restrictions must not be relaxed under this planning work.
+
+## Stop probe deadline/recheck correction
+
+The broker now gives initial/final status, ControlGroup queries and stop one
+monotonic budget, rather than allowing an initial hung probe or a second wait
+budget to exceed the deadline. Each adapter call is timeout-bounded; cleanup
+has a200ms kill grace. Initially inactive units also receive final status and
+both captured/current cgroup checks. Unexpected paths deny. This is not atomic
+exclusion against an external authorized restart and does not qualify new
+worker input/output-FD, modifier, driver or physical-device behavior.
+
+Host regressions cover initial status/show hangs, unit reappearance and several
+slow probes sharing one budget. Full Node94/94 passed with zero remaining
+fixture descendants. `tests/guest/broker-deadline.sh CANDIDATE_BROKER` qualifies
+only a separately named inert sleep unit in a disposable guest. Independently
+observed: inert parent/child stop and cgroup removal; hung probe failed at8s;
+explicit later recovery; a real inert-unit reappearance denied; hung ExecStop
+failed at9s with an8s test budget plus scheduling/cleanup allowance. A2s trial
+failed closed on the slow emulated guest, not a positive2s stop qualification.
+The installed dormant worker stayed inactive/MainPID0/ExecCondition=false.
+Existing ci1 artifacts are unchanged and retain only their original scope.
