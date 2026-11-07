@@ -1,0 +1,7 @@
+# Root-owned fixed configuration; activation stays unavailable.
+backend: Inject
+auto_restart: false
+show_notifications: false
+show_icon: false
+keyboard_layout:
+  layout: us
