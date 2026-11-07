@@ -5,9 +5,11 @@ set -eu
 package=/tmp/southbag-inject-candidate.deb
 [ -f "$package" ] || exit 0
 actual=$(sha256sum "$package" | cut -d' ' -f1)
-[ "$actual" = 57354fa506d2d1d5319bb43384049f32f20127d7cc2ecc6508442fe5a53a4d21 ] || {
- echo 'Unrecognized dormant image package' >&2; exit 1;
-}
+case "$actual" in
+ 57354fa506d2d1d5319bb43384049f32f20127d7cc2ecc6508442fe5a53a4d21|3b63aeaa438de7589ebd2ce6823ad01fcb0762e3d635da6c23986e13879e9e50) ;;
+ *)
+ echo 'Unrecognized dormant image package' >&2; exit 1 ;;
+esac
 dpkg -i "$package"
 rm -f "$package"
 # No service enable/start/restart, module loading or device grants.
