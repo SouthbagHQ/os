@@ -9,7 +9,7 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 [[ $ID = debian && $VERSION_ID = 13 && $(uname -m) = x86_64 ]] || exit 2
 [[ $(sha256sum "$source" | cut -d' ' -f1) = 28fc76302b6cb7f752d6a5f33fda33f04d81a3c7e880305b7d3dff4a493c22be ]] || exit 2
 patch=$repo/packaging/inject-safety-preparation.patch
-[[ $(sha256sum "$patch" | cut -d' ' -f1) = ee2cde05b64d4f80bc9c490b0366e96e83cf32807d81f02d4e0d2db809fc4b44 ]] || exit 2
+[[ $(sha256sum "$patch" | cut -d' ' -f1) = 1cceb2d991da9135e71a90ec68e9487807c1a4969b0a551276c4be6dd3c52ccc ]] || exit 2
 build=$(mktemp -d); trap 'rm -rf "$build"' EXIT
 tar -xzf "$source" -C "$build" --no-same-owner
 cd "$build"
