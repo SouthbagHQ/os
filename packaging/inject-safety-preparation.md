@@ -8,7 +8,7 @@ Baseline corresponding source SHA256:
 28fc76302b6cb7f752d6a5f33fda33f04d81a3c7e880305b7d3dff4a493c22be
 
 Patch SHA256:
-ee2cde05b64d4f80bc9c490b0366e96e83cf32807d81f02d4e0d2db809fc4b44
+1cceb2d991da9135e71a90ec68e9487807c1a4969b0a551276c4be6dd3c52ccc
 
 ## Candidate changes
 
@@ -32,8 +32,8 @@ ee2cde05b64d4f80bc9c490b0366e96e83cf32807d81f02d4e0d2db809fc4b44
 
 Native Debian13, networkless build environment, no worker entrypoint invoked:
 
-- Inject-only CLI14/14.
-- Inject-only detector17/17; non-inject detector12/12.
+- Inject-only CLI23/23.
+- Inject-only detector20/20; non-inject detector12/12.
 - Inject-only UI3/3; non-inject UI2/2.
 - Non-inject CLI13/13 with wayland, disabled clipboard and no modulo. This
   checks conditional paths, not a complete stock desktop build.
@@ -77,3 +77,28 @@ The full host suite passed91/91 with six abandoned inert fixture sleepers
 cleaned and zero remaining children. Runner fixtures3/3 verify detached-child
 cleanup, no-descendant cleanup and failure-code preservation. This changes
 only test execution hygiene, not product stop/cleanup semantics.
+
+
+## Finite-profile and ordered-monitor review extension
+
+The later source-only candidate validates all loaded match groups before
+engine/detector setup, not just the currently active group. Every config must
+use explicit Inject backend. Variables of any type, regex/empty triggers,
+images, markup/templates/cursor markers and clipboard effects deny. Built-in
+debug/search/restart actions are absent in inject-only mode. Its exact production
+renderer has zero registered dynamic extensions; an inert test verifies literal
+Unicode output and rejects every standard dynamic extension type. This is not
+runtime expansion or graphical-field qualification. Shipped rules stay empty.
+
+The test-only topology primitive also rejects missing, duplicate, out-of-order,
+gapped and overflowed abstract monitor-local cursors. These are not Linux global
+uevent sequence numbers. No operational watcher, physical trust resolver, grant,
+activation, rearm or resume is wired. A clean synthetic observation never grants
+permission to read devices. Hardware and real-worker lifecycle gates stay open.
+
+
+The inject-only engine never raises CAP_DAC_OVERRIDE. Its worker handler no
+longer asks to retain capability setup. A no-desktop-probe app-info provider
+replaces environment-selected wlrctl/kdotool/niri provider discovery. Inert tests
+exercise the actual provider and capability policy without process/device or
+transport initialization. These are source changes, not privilege/runtime proof.
