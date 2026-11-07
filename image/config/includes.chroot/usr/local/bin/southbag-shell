@@ -11,8 +11,38 @@ set -eu
 # and fonts and fetches fail there.
 /bin/busybox httpd -p 127.0.0.1:8080 -h /usr/share/southbag-shell
 
-exec /usr/bin/cog \
-  --gapplication-app-id=cc.southbag.shell \
-  --platform=wayland \
-  --bg-color=#050608 \
-  http://127.0.0.1:8080/
+# If the previous session or boot ended while locked (compositor crash;
+# SAK is disabled image-wide), come back locked - never back to an exposed
+# desktop. The lock surface goes up before the shell does.
+if [ -e "${HOME:-/home/customer}/.local/share/southbag/locked" ]; then
+ /usr/local/bin/southbag-lock &
+fi
+
+# Supervise only our tracked shell; reset kills its process group, then this
+# loop creates a clean private profile. Never reopen while cleanup is blocked.
+# While blocked, run the protected recovery surface instead of the shell: a
+# visible cleanup-retry page with no account apps and no credential prompts.
+# Recovery is user-triggered from that page (the manager re-runs the same
+# bounded reset); there is no automatic unblock without verified cleanup.
+root="$HOME/.local/share/southbag/device-session"
+while :; do
+ if [ -e "$root/blocked" ]; then
+  /usr/local/bin/southbag-device-session recovery || { sleep 1; continue; }
+  if [ -f "$root/recovery.unit" ]; then
+   unit=$(cat "$root/recovery.unit")
+   while systemctl --user is-active --quiet "$unit"; do [ -e "$root/blocked" ] || break; sleep .5; done
+   # Cleanup just succeeded mid-response: give the recovery page a moment to
+   # receive its 204 before the surface goes away.
+   [ -e "$root/blocked" ] || sleep 2
+   systemctl --user stop "$unit" 2>/dev/null || true
+   rm -f "$root/recovery.unit"
+  fi
+  continue
+ fi
+ /usr/local/bin/southbag-device-session shell || { sleep 1; continue; }
+ if [ -f "$root/shell.unit" ]; then
+  unit=$(cat "$root/shell.unit")
+  while systemctl --user is-active --quiet "$unit"; do sleep .2; done
+ fi
+ sleep .2
+done

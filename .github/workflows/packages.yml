@@ -1,0 +1,135 @@
+name: packages
+
+# Native compile and packaging proof for the update channel on pull
+# requests - no secrets, no signing, no deploy. The pages workflow owns
+# signing and publishing on main; this one only proves the packages build.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build:device
+
+      - name: Build shell package
+        env:
+          # Same rule as pages.yml: empty ships no browser package and
+          # v1.0.0 must never be pinned (it predates app windows).
+          SOUTHBAG_BROWSER_VERSION: ""
+        run: |
+          mkdir -p out/pool
+          # bash invocation, not ./: file modes are not
+          # guaranteed to survive publication.
+          bash packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          bash packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
+          ls -la out/pool
+
+      - name: Validate package structure
+        run: |
+          for deb in out/pool/*.deb; do
+            dpkg-deb -I "$deb" > /dev/null
+            dpkg-deb -c "$deb" > /dev/null
+            echo "ok $deb"
+          done
+
+  # lockd must compile against the TARGET userland, not the Ubuntu host:
+  # Debian trixie ships libjpeg62-turbo (libjpeg.so.62) where Ubuntu 24.04
+  # ships libjpeg-turbo8 (libjpeg.so.8) - a binary linked on the host would
+  # not even load on the device. This job therefore runs in a debian:trixie
+  # container, the same release the image builds from.
+  lockd:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    defaults:
+      run:
+        # The runner falls back to dash inside this minimal image, and the
+        # steps below use bash syntax (${VAR:0:7}, bash-invoked scripts).
+        # bash is installed by the first step, so only that step runs
+        # under sh; it is POSIX-only.
+        shell: bash
+    steps:
+      # The debian:trixie image is minimal: install git, CA roots and bash
+      # first or neither the checkout action nor the bash steps can run.
+      # Container jobs run as root, so nothing in this job uses sudo.
+      - name: Install git for checkout
+        shell: sh
+        run: |
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates bash
+          # The checked-out workspace is owned by the host runner user, but
+          # this job runs as root in the container, so git refuses it as
+          # dubious ownership. Allow this exact workspace path only - never
+          # a wildcard.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/checkout@v5
+
+      # The lockd sources are in this tree (the combined base carries
+      # them). Fail closed if any required path is missing - never fetch
+      # pinned sources from another branch, which could test stale code.
+      - name: Verify lockd sources are in the tree
+        run: |
+          set -euo pipefail
+          for p in \
+            image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c \
+            image/config/includes.chroot/opt/southbag-lockd-src/southbag-face-capture.c \
+            image/config/includes.chroot/opt/southbag-broker-src/southbag-input-client.c \
+            image/config/includes.chroot/usr/local/sbin/southbag-input-broker \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker.service \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker.socket \
+            image/config/includes.chroot/etc/systemd/system/southbag-input-broker@.service \
+            image/config/includes.chroot/usr/local/bin/southbag-lock \
+            image/config/includes.chroot/usr/local/bin/southbag-unlock \
+            image/config/includes.chroot/usr/local/bin/southbag-face-unlock \
+            image/config/includes.chroot/etc/swaylock/config \
+            image/config/includes.chroot/etc/pam.d/swaylock; do
+            if [ ! -f "$p" ]; then
+              echo "::error::required lockd source missing from the tree: $p"
+              exit 1
+            fi
+          done
+          echo "All required lockd sources present in-tree."
+
+      - name: Install build dependencies
+        run: |
+          # Exactly the -dev packages image hook 0016 installs inside the
+          # chroot, resolved here by apt in the same trixie userland.
+          apt-get install -y -qq --no-install-recommends \
+            build-essential pkg-config libwayland-dev wayland-protocols \
+            libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+
+      - name: Build lockd package
+        run: bash packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
+
+      - name: Validate package and target linkage
+        run: |
+          set -euo pipefail
+          deb=$(ls out/pool/southbag-lockd_*.deb)
+          dpkg-deb -I "$deb" > /dev/null
+          dpkg-deb -c "$deb" > /dev/null
+          rm -rf /tmp/lockd-check
+          dpkg-deb -x "$deb" /tmp/lockd-check
+          # libjpeg belongs to the face-capture helper (it compresses
+          # camera frames), not the lock daemon - southbag-lockd links
+          # wayland-client/cairo/xkbcommon only. Assert each binary's real
+          # target linkage, and fail on Ubuntu's libjpeg.so.8 anywhere.
+          lockd_needed=$(readelf -d /tmp/lockd-check/usr/local/bin/southbag-lockd | grep NEEDED)
+          face_needed=$(readelf -d /tmp/lockd-check/usr/local/bin/southbag-face-capture | grep NEEDED)
+          echo "$lockd_needed"
+          echo "$face_needed"
+          for lib in libwayland-client.so.0 libcairo.so.2 libxkbcommon.so.0; do
+            echo "$lockd_needed" | grep -q "$lib" || { echo "::error::southbag-lockd missing expected $lib"; exit 1; }
+          done
+          echo "$face_needed" | grep -q 'libjpeg\.so\.62' || { echo "::error::southbag-face-capture is not linked against trixie's libjpeg.so.62"; exit 1; }
+          if echo "$lockd_needed$face_needed" | grep -q 'libjpeg\.so\.8'; then
+            echo "::error::libjpeg.so.8 linkage - wrong target userland"
+            exit 1
+          fi
+          echo "ok $deb (trixie linkage verified: lockd wayland/cairo/xkbcommon, face-capture libjpeg.so.62)"

@@ -2,35 +2,100 @@
 # Opens an app as its own window.
 #
 # The shell is a web page and cannot start processes, so this is the seam:
-# the launcher asks for an app by id and gets back a cog process of its own,
-# which labwc manages as an ordinary window. One app, one process, one origin
-# — which is the property that makes this a ChromeOS-shaped system rather
-# than a single page pretending to be a desktop.
+# the launcher asks for an app by id and gets back a window of its own,
+# which labwc manages as an ordinary window. One app, one window, one
+# process (or one browser app window) — which is the property that makes
+# this a ChromeOS-shaped system rather than a single page pretending to be
+# a desktop.
+#
+# Two runtimes can own the window:
+#
+#   * Southbag Browser, when installed, opens website apps as its app
+#     windows: `southbag-browser --app=<url>` gives each service a real
+#     top-level window with no tab strip or omnibox, on the full browser
+#     stack (Southbag Identity login, single sign-on, Southbag Secure,
+#     fees and Rewards all apply). The Browser app itself is the whole
+#     browser, so it just launches. Re-invoking an id focuses the window
+#     the service already has — the browser is single-instance.
+#
+#   * cog, otherwise (and always for the built-in apps), opens the shell's
+#     Browser web app (?app=browser&go=), which takes the window to the
+#     service top-level. Nothing is framed in either runtime; "the
+#     browser" is the same one thing on every app.
 #
 # Runs inside the customer's Wayland session, so the process it spawns
 # inherits WAYLAND_DISPLAY and appears on the seat.
 set -eu
 
+[ "${REQUEST_METHOD:-}" = "POST" ] && [ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] || {
+ printf 'Status: 403\r\n\r\n'; exit 0;
+}
+manager=/usr/local/bin/southbag-device-session
 app=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^app=\([a-z][a-z0-9-]*\)$/\1/p')
 
 # Whitelist. The id reaches this from a web page, and is never interpolated
-# into anything without passing through here first.
+# into anything without passing through here first. `go`/`svc` are one of a
+# fixed set of service URLs, never anything the request asked for.
+go=""
+svc=""
 case "$app" in
-  files|banking|office|chat|code|terminal|branches|lore|kevin|settings|browser) ;;
+  files)    svc="https://drive.southbag.cc/" ;;
+  banking)  svc="https://banking.southbag.cc/" ;;
+  office)   svc="https://office.southbag.cc/" ;;
+  chat)     svc="https://social.southbag.cc/" ;;
+  code)     svc="https://code.southbag.cc/" ;;
+  branches) svc="https://branch-locator.southbag.cc/" ;;
+  lore)     svc="https://lore.southbag.cc/" ;;
+  terminal|kevin|settings|browser) ;;
   *)
     printf 'Status: 400\r\nContent-Type: text/plain\r\n\r\nunknown app\r\n'
     exit 0
     ;;
 esac
+if [ -n "$svc" ]; then
+  go=$(printf '%s' "$svc" | sed 's/:/%3A/g; s|/|%2F|g')
+fi
 
-# The app id has to be distinct per app, and not merely for tidiness: cog is
-# a singleton GApplication, so a second cog sharing an id forwards to the
-# running instance instead of starting a process of its own. It is also what
-# lets the compositor tell the shell and an app apart.
-/usr/bin/cog \
-  --gapplication-app-id="cc.southbag.$app" \
-  --platform=wayland \
-  --bg-color=#0c0e13 \
-  "http://127.0.0.1:8080/?app=$app" >/dev/null 2>&1 &
+# The real browser wins when the image ships it. command -v covers PATH
+# installs; the rest are the packaging layouts we know about.
+southbag_browser=""
+for candidate in southbag-browser /usr/bin/southbag-browser /usr/local/bin/southbag-browser "/opt/Southbag Browser/southbag-browser" /usr/lib/southbag-browser/southbag-browser; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    southbag_browser="$candidate"
+    break
+  fi
+done
+
+if [ -n "$southbag_browser" ]; then
+  # SOUTHBAG_OS marks every process the OS launches: under it the browser
+  # refuses downloads, because the customer has no local file storage -
+  # files live in Southbag Drive. cog needs no mark; it cannot download
+  # at all.
+  if [ "$app" = "browser" ]; then
+    "$manager" launch "$app" env SOUTHBAG_OS=1 "$southbag_browser" --user-data-dir="$HOME/.local/share/southbag/device-session/browser" || { printf 'Status: 403\r\n\r\n'; exit 0; }
+  elif [ -n "$svc" ]; then
+    "$manager" launch "$app" env SOUTHBAG_OS=1 "$southbag_browser" --user-data-dir="$HOME/.local/share/southbag/device-session/browser" --app="$svc" || { printf 'Status: 403\r\n\r\n'; exit 0; }
+  else
+    # Built-in apps (terminal, kevin, settings) stay on cog below.
+    southbag_browser=""
+  fi
+fi
+
+if [ -z "$southbag_browser" ]; then
+  target="http://127.0.0.1:8080/?app=$app"
+  if [ -n "$go" ]; then
+    target="http://127.0.0.1:8080/?app=browser&go=$go"
+  fi
+
+  # The app id has to be distinct per app, and not merely for tidiness: cog is
+  # a singleton GApplication, so a second cog sharing an id forwards to the
+  # running instance instead of starting a process of its own. It is also what
+  # lets the compositor tell the shell and an app apart.
+  "$manager" launch "$app" /usr/bin/cog \
+    --gapplication-app-id="cc.southbag.$app" \
+    --platform=wl \
+    --bg-color=#0c0e13 \
+    "$target" || { printf 'Status: 403\r\n\r\n'; exit 0; }
+fi
 
 printf 'Status: 204\r\n\r\n'

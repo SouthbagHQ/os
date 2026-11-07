@@ -1,0 +1,841 @@
+diff --git a/espanso-detect/src/evdev/device.rs b/espanso-detect/src/evdev/device.rs
+index 7797164..3b52aee 100644
+--- a/espanso-detect/src/evdev/device.rs
++++ b/espanso-detect/src/evdev/device.rs
+@@ -111,6 +111,7 @@ impl Device {
+                     std::mem::size_of_val(&evs),
+                 )
+             };
++            require_live_read_length(len)?;
+             if len <= 0 {
+                 break;
+             }
+@@ -119,6 +120,7 @@ impl Device {
+ 
+             #[allow(clippy::needless_range_loop)]
+             for i in 0..nevs {
++                require_contiguous_event(evs[i].type_, evs[i].code)?;
+                 let event = self.process_event(evs[i].type_, evs[i].code, evs[i].value);
+                 if let Some(event) = event {
+                     events.push(event);
+@@ -280,6 +282,58 @@ impl Drop for Device {
+     }
+ }
+ 
++// EOF must not leave a dedicated worker silently using a partial input set.
++fn require_live_read_length(length: ssize_t) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only") {
++        if length == 0 {
++            return Err(DeviceError::FailedReadNoSuchDevice.into());
++        }
++        if length > 0 && length as usize % std::mem::size_of::<input_event>() != 0 {
++            return Err(DeviceError::InputStreamInvalidated.into());
++        }
++    }
++    Ok(())
++}
++
++fn require_contiguous_event(event_type: u16, code: u16) -> Result<()> {
++    // linux/input-event-codes.h: EV_SYN=0, SYN_DROPPED=3. Lost events
++    // invalidate modifier/history assumptions. Never guess a resync or continue.
++    if cfg!(feature = "southbag-inject-only") && event_type == 0 && code == 3 {
++        return Err(DeviceError::InputStreamInvalidated.into());
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod live_read_tests {
++    use super::*;
++    #[test]
++    fn eof_invalidates_but_normal_and_errno_handling_stays_separate() {
++        assert_eq!(require_live_read_length(0).is_err(),
++            cfg!(feature = "southbag-inject-only"));
++        assert!(require_live_read_length(-1).is_ok());
++        assert!(require_live_read_length(std::mem::size_of::<input_event>() as ssize_t).is_ok());
++    }
++
++    #[test]
++    fn truncated_record_invalidates_before_conversion() {
++        let size = std::mem::size_of::<input_event>() as ssize_t;
++        for length in [1, size - 1, size + 1] {
++            assert_eq!(require_live_read_length(length).is_err(),
++                cfg!(feature = "southbag-inject-only"));
++        }
++        assert!(require_live_read_length(size * 16).is_ok());
++    }
++
++    #[test]
++    fn dropped_sync_invalidates_without_inventing_modifier_state() {
++        assert_eq!(require_contiguous_event(0, 3).is_err(),
++            cfg!(feature = "southbag-inject-only"));
++        assert!(require_contiguous_event(0, 0).is_ok());
++        assert!(require_contiguous_event(EV_KEY as u16, 3).is_ok());
++    }
++}
++
+ pub fn get_devices(keymap: &Keymap) -> Result<Vec<Device>> {
+     let mut keyboards = Vec::new();
+     let dirs = std::fs::read_dir("/dev/input/")?;
+@@ -331,4 +385,7 @@ pub enum DeviceError {
+ 
+     #[error("read operation failed: ENODEV No such device")]
+     FailedReadNoSuchDevice,
++
++    #[error("input stream continuity lost")]
++    InputStreamInvalidated,
+ }
+diff --git a/espanso-detect/src/evdev/mod.rs b/espanso-detect/src/evdev/mod.rs
+index 587141b..5314ac9 100644
+--- a/espanso-detect/src/evdev/mod.rs
++++ b/espanso-detect/src/evdev/mod.rs
+@@ -27,6 +27,9 @@ mod hotkey;
+ mod keymap;
+ mod state;
+ mod sync;
++// Inert candidate policy only. No operational watcher/device grants.
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod topology_guard;
+ 
+ use std::cell::RefCell;
+ use std::collections::HashMap;
+@@ -217,6 +220,24 @@ fn evdev_modifiers_state(devices: &[Device]) -> Result<Option<sync::ModifiersSta
+     Ok(Some(state))
+ }
+ 
++// A dedicated worker must not continue with a partial or uncertain input
++// set. No device is reopened or granted access by this error policy.
++fn require_live_poll_source(flags: u32) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only")
++        && flags & ((libc::EPOLLERR | libc::EPOLLHUP) as u32) != 0 {
++        return Err(EVDEVSourceError::DeviceInvalidated().into());
++    }
++    Ok(())
++}
++
++fn require_stable_input_after_read_error(error: &anyhow::Error) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only") {
++        error!("input set invalidated by read error; stopping detector: {error}");
++        return Err(EVDEVSourceError::DeviceInvalidated().into());
++    }
++    Ok(())
++}
++
+ impl EVDEVSource {
+     pub fn new(options: SourceCreationOptions) -> EVDEVSource {
+         let mut modifiers_map = HashMap::new();
+@@ -341,6 +362,7 @@ impl Source for EVDEVSource {
+             }
+ 
+             for ev in evs.iter().take(ret as usize) {
++                require_live_poll_source(ev.events)?;
+                 let device = &self.devices[ev.u64 as usize];
+                 match device.read() {
+                     Ok(events) if !events.is_empty() => {
+@@ -366,6 +388,7 @@ impl Source for EVDEVSource {
+                     }
+                     Ok(_) => { /* SKIP EMPTY */ }
+                     Err(err) => {
++                        require_stable_input_after_read_error(&err)?;
+                         if let Some(DeviceError::FailedReadNoSuchDevice) =
+                             err.downcast_ref::<DeviceError>()
+                         {
+@@ -410,6 +433,9 @@ pub enum EVDEVSourceError {
+ 
+     #[error("internal error")]
+     Internal(),
++
++    #[error("input device set invalidated")]
++    DeviceInvalidated(),
+ }
+ 
+ impl From<RawInputEvent> for Option<InputEvent> {
+@@ -596,3 +622,36 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod stable_input_policy_tests {
++    use super::*;
++
++    #[test]
++    fn poll_error_or_hangup_invalidates_even_with_readiness() {
++        assert!(require_live_poll_source(libc::EPOLLIN as u32).is_ok());
++        for flags in [libc::EPOLLERR, libc::EPOLLHUP,
++            libc::EPOLLIN | libc::EPOLLERR, libc::EPOLLIN | libc::EPOLLHUP] {
++            assert_eq!(require_live_poll_source(flags as u32).is_err(),
++                cfg!(feature = "southbag-inject-only"));
++        }
++    }
++
++    #[test]
++    fn read_failures_invalidate_inject_only_detector() {
++        // Inert errors only: never open a device or initialize a detector.
++        let errors: Vec<anyhow::Error> = vec![
++            DeviceError::FailedReadNoSuchDevice.into(),
++            DeviceError::FailedRead(libc::EIO).into(),
++            anyhow::anyhow!("unclassified input-read failure"),
++        ];
++        for error in errors {
++            let result = require_stable_input_after_read_error(&error);
++            if cfg!(feature = "southbag-inject-only") {
++                assert_eq!(result.unwrap_err().to_string(), "input device set invalidated");
++            } else {
++                assert!(result.is_ok(), "stock error handling remains unchanged");
++            }
++        }
++    }
++}
+diff --git a/espanso-detect/src/evdev/topology_guard.rs b/espanso-detect/src/evdev/topology_guard.rs
+new file mode 100644
+index 0000000..2d50ee1
+--- /dev/null
++++ b/espanso-detect/src/evdev/topology_guard.rs
+@@ -0,0 +1,189 @@
++// Source-only policy primitive. It neither discovers/trusts devices nor opens,
++// grants, starts or resumes anything. A caller must treat Unchanged as absence
++// of a newly observed change, NEVER as authorization. No operational wiring.
++use std::collections::BTreeSet;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Invalidation {
++    InvalidSnapshot,
++    GenerationChanged,
++    DeviceSetChanged,
++    DeviceEvent,
++    MonitorGap,
++    MonitorLost,
++    ReadFailure,
++    StreamOrder,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Observation {
++    // Even apparently benign add/remove/change signals invalidate. Do not
++    // silently extend a previous generation to a replacement device.
++    DeviceEvent,
++    MonitorGap,
++    MonitorLost,
++    ReadFailure,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Decision {
++    Unchanged,
++    Inhibit(Invalidation),
++}
++
++pub struct TopologyGuard {
++    generation: u64,
++    // Opaque tokens are supplied by a future privileged identity resolver.
++    // Token equality alone establishes no physical provenance or owner trust.
++    snapshot: BTreeSet<String>,
++    invalidated: Option<Invalidation>,
++    last_record: Option<u64>,
++}
++
++impl TopologyGuard {
++    pub fn observe_initial(generation: u64, tokens: &[String]) -> Self {
++        let snapshot: BTreeSet<String> = tokens.iter().cloned().collect();
++        let invalid = generation == 0 || tokens.is_empty()
++            || tokens.iter().any(|s| s.trim().is_empty())
++            || snapshot.len() != tokens.len();
++        Self { generation, snapshot,
++            invalidated: invalid.then_some(Invalidation::InvalidSnapshot),
++            last_record: None }
++    }
++
++    fn invalidate(&mut self, reason: Invalidation) -> Decision {
++        let first = *self.invalidated.get_or_insert(reason);
++        Decision::Inhibit(first)
++    }
++
++    pub fn reconcile(&mut self, generation: u64, tokens: &[String]) -> Decision {
++        if let Some(reason) = self.invalidated { return Decision::Inhibit(reason); }
++        if generation != self.generation {
++            return self.invalidate(Invalidation::GenerationChanged);
++        }
++        let observed: BTreeSet<String> = tokens.iter().cloned().collect();
++        if observed.len() != tokens.len() || observed != self.snapshot {
++            return self.invalidate(Invalidation::DeviceSetChanged);
++        }
++        Decision::Unchanged
++    }
++
++    // Abstract monitor-local record numbering, not Linux global uevent
++    // SEQNUM. Only synthetic tests use this; no operational source is wired.
++    // First cursor must be1; dropped/duplicate/out-of-order records deny.
++    pub fn reconcile_record(&mut self, cursor: u64, generation: u64,
++                            tokens: &[String]) -> Decision {
++        if let Some(reason) = self.invalidated { return Decision::Inhibit(reason); }
++        let expected = match self.last_record {
++            None => Some(1),
++            Some(last) => last.checked_add(1),
++        };
++        if expected != Some(cursor) {
++            return self.invalidate(Invalidation::StreamOrder);
++        }
++        self.last_record = Some(cursor);
++        self.reconcile(generation, tokens)
++    }
++
++    pub fn observe(&mut self, event: Observation) -> Decision {
++        self.invalidate(match event {
++            Observation::DeviceEvent => Invalidation::DeviceEvent,
++            Observation::MonitorGap => Invalidation::MonitorGap,
++            Observation::MonitorLost => Invalidation::MonitorLost,
++            Observation::ReadFailure => Invalidation::ReadFailure,
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn tokens(values: &[&str]) -> Vec<String> {
++        values.iter().map(|s| s.to_string()).collect()
++    }
++
++    #[test]
++    fn invalid_snapshots_never_pass() {
++        for (generation, values) in [(0, vec!["a"]), (1, vec![]),
++            (1, vec![""]), (1, vec![" "]), (1, vec!["a", "a"])] {
++            let values = tokens(&values);
++            let mut guard = TopologyGuard::observe_initial(generation, &values);
++            assert_eq!(guard.reconcile(1, &tokens(&["a"])),
++                Decision::Inhibit(Invalidation::InvalidSnapshot));
++        }
++    }
++
++    #[test]
++    fn order_only_is_unchanged_not_authorized() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a", "b"]));
++        assert_eq!(guard.reconcile(7, &tokens(&["b", "a"])), Decision::Unchanged);
++    }
++
++    #[test]
++    fn addition_removal_replacement_duplicate_all_invalidate() {
++        for values in [vec!["a"], vec!["a", "b", "c"], vec!["a", "c"],
++            vec!["a", "b", "b"], vec![]] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a", "b"]));
++            assert_eq!(guard.reconcile(7, &tokens(&values)),
++                Decision::Inhibit(Invalidation::DeviceSetChanged));
++            assert_eq!(guard.reconcile(7, &tokens(&["a", "b"])),
++                Decision::Inhibit(Invalidation::DeviceSetChanged));
++        }
++    }
++
++    #[test]
++    fn new_generation_does_not_rearm_old_guard() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        for generation in [8, 7, 0] {
++            assert_eq!(guard.reconcile(generation, &tokens(&["a"])),
++                Decision::Inhibit(Invalidation::GenerationChanged));
++        }
++    }
++
++    #[test]
++    fn every_monitor_or_read_failure_invalidates_permanently() {
++        for event in [Observation::DeviceEvent, Observation::MonitorGap,
++            Observation::MonitorLost, Observation::ReadFailure] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++            let result = guard.observe(event);
++            assert!(matches!(result, Decision::Inhibit(_)));
++            assert_eq!(guard.reconcile(7, &tokens(&["a"])), result);
++            assert_eq!(guard.observe(Observation::DeviceEvent), result);
++        }
++    }
++    #[test]
++    fn ordered_identical_records_never_grant_or_resume() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        for cursor in 1..=100 {
++            assert_eq!(guard.reconcile_record(cursor, 7, &tokens(&["a"])),
++                       Decision::Unchanged);
++        }
++        let invalid = guard.observe(Observation::MonitorLost);
++        assert_eq!(guard.reconcile_record(101, 7, &tokens(&["a"])), invalid);
++    }
++
++    #[test]
++    fn dropped_duplicate_out_of_order_records_invalidate() {
++        for cursor in [0, 1, 3, u64::MAX] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++            assert_eq!(guard.reconcile_record(1, 7, &tokens(&["a"])),
++                       Decision::Unchanged);
++            assert_eq!(guard.reconcile_record(cursor, 7, &tokens(&["a"])),
++                       Decision::Inhibit(Invalidation::StreamOrder));
++            assert_eq!(guard.reconcile_record(2, 7, &tokens(&["a"])),
++                       Decision::Inhibit(Invalidation::StreamOrder));
++        }
++    }
++
++    #[test]
++    fn missing_initial_record_and_cursor_overflow_deny() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        assert_eq!(guard.reconcile_record(2, 7, &tokens(&["a"])),
++                   Decision::Inhibit(Invalidation::StreamOrder));
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        guard.last_record = Some(u64::MAX);
++        assert_eq!(guard.reconcile_record(0, 7, &tokens(&["a"])),
++                   Decision::Inhibit(Invalidation::StreamOrder));
++    }
++
++}
+diff --git a/espanso-ui/Cargo.toml b/espanso-ui/Cargo.toml
+index 012b47e..2e4b153 100644
+--- a/espanso-ui/Cargo.toml
++++ b/espanso-ui/Cargo.toml
+@@ -6,6 +6,9 @@ edition = "2021"
+ build = "build.rs"
+ 
+ [features]
++# Dedicated worker must never initialize desktop notification transport.
++southbag-inject-only = []
++
+ # If enabled, avoid linking with the gdiplus library on Windows, which
+ # might conflict with wxWidgets
+ avoid-gdi = []
+diff --git a/espanso-ui/src/linux/mod.rs b/espanso-ui/src/linux/mod.rs
+index 0184bf7..bd24a92 100644
+--- a/espanso-ui/src/linux/mod.rs
++++ b/espanso-ui/src/linux/mod.rs
+@@ -25,6 +25,7 @@ use crossbeam::{
+     select,
+ };
+ use log::error;
++#[cfg(not(feature = "southbag-inject-only"))]
+ use notify_rust::Notification;
+ 
+ use crate::{event::UIEvent, UIEventLoop, UIRemote};
+@@ -63,6 +64,12 @@ impl UIRemote for LinuxRemote {
+         // NOOP on linux
+     }
+ 
++    #[cfg(feature = "southbag-inject-only")]
++    fn show_notification(&self, _: &str) {
++        // No notification transport, even if a caller/config asks for one.
++    }
++
++    #[cfg(not(feature = "southbag-inject-only"))]
+     fn show_notification(&self, message: &str) {
+         if let Err(error) = Notification::new()
+             .summary("Espanso")
+@@ -124,3 +131,34 @@ impl UIEventLoop for LinuxEventLoop {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod inert_lifecycle_tests {
++    use super::*;
++
++    #[cfg(feature = "southbag-inject-only")]
++    #[test]
++    fn notification_request_has_no_transport_or_lifecycle_effect() {
++        let (remote, eventloop) = create(LinuxUIOptions {
++            notification_icon_path: String::new(),
++        });
++        remote.show_notification("inert notification fixture");
++        remote.exit();
++        assert!(eventloop.run(Box::new(|_| panic!("exit already queued"))).is_ok());
++    }
++
++    #[test]
++    fn engine_unwind_drops_remote_and_unblocks_ui_as_error() {
++        // Channel-only lifecycle fixture. No display, notification, worker,
++        // device, credential or transport initialization.
++        let (remote, eventloop) = create(LinuxUIOptions {
++            notification_icon_path: String::new(),
++        });
++        let child = std::thread::spawn(move || {
++            let _owned_remote = remote;
++            panic!("inert engine-unwind fixture");
++        });
++        assert!(child.join().is_err());
++        assert!(eventloop.run(Box::new(|_| panic!("channel must already be closed"))).is_err());
++    }
++}
+diff --git a/espanso/Cargo.toml b/espanso/Cargo.toml
+index 48991c8..a518052 100644
+--- a/espanso/Cargo.toml
++++ b/espanso/Cargo.toml
+@@ -11,7 +11,7 @@ edition = "2021"
+ 
+ [features]
+ # Southbag fixed-match build: never initialize a clipboard/compositor client.
+-southbag-inject-only = ["wayland", "espanso-clipboard/disabled", "espanso-detect/southbag-inject-only"]
++southbag-inject-only = ["wayland", "espanso-clipboard/disabled", "espanso-detect/southbag-inject-only", "espanso-ui/southbag-inject-only"]
+ 
+ default = ["modulo", "native-tls"]
+ 
+diff --git a/espanso/src/cli/worker/builtin/mod.rs b/espanso/src/cli/worker/builtin/mod.rs
+index 35a52d0..c5c6b1b 100644
+--- a/espanso/src/cli/worker/builtin/mod.rs
++++ b/espanso/src/cli/worker/builtin/mod.rs
+@@ -51,6 +51,13 @@ impl Default for BuiltInMatch {
+     }
+ }
+ 
++#[cfg(feature = "southbag-inject-only")]
++pub fn get_builtin_matches(_: &dyn Config) -> Vec<BuiltInMatch> {
++    // Fixed literal profile has no hidden debug/search/restart triggers.
++    Vec::new()
++}
++
++#[cfg(not(feature = "southbag-inject-only"))]
+ pub fn get_builtin_matches(config: &dyn Config) -> Vec<BuiltInMatch> {
+     let mut matches = vec![
+         debug::create_match_paste_active_config_info(),
+diff --git a/espanso/src/cli/worker/engine/mod.rs b/espanso/src/cli/worker/engine/mod.rs
+index 608bc6e..ea206f9 100644
+--- a/espanso/src/cli/worker/engine/mod.rs
++++ b/espanso/src/cli/worker/engine/mod.rs
+@@ -101,6 +101,9 @@ pub fn initialize_and_spawn(
+             let preferences = crate::preferences::get_default(&paths.runtime)
+                 .expect("unable to load preferences");
+ 
++            #[cfg(feature = "southbag-inject-only")]
++            let app_info_provider = super::finite_profile::app_info_provider();
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let app_info_provider =
+                 espanso_info::get_provider().expect("unable to initialize app info provider");
+             // TODO: read interval from configs?
+@@ -149,15 +152,20 @@ pub fn initialize_and_spawn(
+                 })
+                 .expect("failed to initialize detector module");
+             let exit_source = super::engine::funnel::exit::ExitSource::new(exit_signal, &sequencer);
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let ipc_event_source =
+                 super::engine::funnel::ipc::IpcEventSource::new(ipc_event_receiver, &sequencer);
++            #[cfg(feature = "southbag-inject-only")]
++            drop(ipc_event_receiver);
+             let ui_source = super::engine::funnel::ui::UISource::new(ui_event_receiver, &sequencer);
+             let secure_input_source = super::engine::funnel::secure_input::SecureInputSource::new(
+                 secure_input_receiver,
+                 &sequencer,
+             );
+             let mut sources: Vec<&dyn espanso_engine::funnel::Source> =
+-                vec![&detect_source, &exit_source, &ui_source, &ipc_event_source];
++                vec![&detect_source, &exit_source, &ui_source];
++            #[cfg(not(feature = "southbag-inject-only"))]
++            sources.push(&ipc_event_source);
+             if cfg!(target_os = "macos") {
+                 sources.push(&secure_input_source);
+             }
+@@ -217,6 +225,11 @@ pub fn initialize_and_spawn(
+             let choice_adapter = ChoiceSelectorAdapter::new(&modulo_search_ui);
+             let choice_extension =
+                 espanso_render::extension::choice::ChoiceExtension::new(&choice_adapter);
++            // No dynamic renderer extension in a literal-only worker, even
++            // if a future caller accidentally bypasses profile validation.
++            #[cfg(feature = "southbag-inject-only")]
++            let renderer = super::finite_profile::renderer();
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let renderer = espanso_render::create(vec![
+                 &clipboard_extension,
+                 &date_extension,
+@@ -322,6 +335,23 @@ pub fn initialize_and_spawn(
+     Ok(handle)
+ }
+ 
++#[cfg(feature = "southbag-inject-only")]
++fn grant_linux_capabilities(_: bool) -> bool {
++    // Device access must come only from a separately authorized per-device
++    // policy. Never raise process-wide DAC override as a fallback.
++    false
++}
++
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod dedicated_capability_tests {
++    #[test]
++    fn neither_backend_path_requests_capabilities() {
++        assert!(!super::grant_linux_capabilities(true));
++        assert!(!super::grant_linux_capabilities(false));
++    }
++}
++
++#[cfg(not(feature = "southbag-inject-only"))]
+ fn grant_linux_capabilities(use_evdev_backend: bool) -> bool {
+     if use_evdev_backend {
+         if crate::capabilities::can_use_capabilities() {
+diff --git a/espanso/src/cli/worker/finite_profile.rs b/espanso/src/cli/worker/finite_profile.rs
+new file mode 100644
+index 0000000..e1642f2
+--- /dev/null
++++ b/espanso/src/cli/worker/finite_profile.rs
+@@ -0,0 +1,181 @@
++// Conservative source-only candidate contract: literal finite key injection.
++// This validates match data, never reads devices, renders content or activates.
++use anyhow::{bail, Result};
++use espanso_config::matches::{store::MatchStore, store::MatchSet, MatchCause,
++    MatchEffect, TextFormat, TextInjectMode};
++
++pub fn app_info_provider() -> Box<dyn espanso_info::AppInfoProvider> {
++    struct NoDesktopProbe;
++    impl espanso_info::AppInfoProvider for NoDesktopProbe {
++        fn get_info(&self) -> espanso_info::AppInfo {
++            espanso_info::AppInfo { title: None, exec: None, class: None }
++        }
++    }
++    Box::new(NoDesktopProbe)
++}
++
++pub fn renderer() -> impl espanso_render::Renderer {
++    espanso_render::create(Vec::new())
++}
++
++pub fn validate_configs(store: &dyn espanso_config::config::ConfigStore) -> Result<()> {
++    validate_backend(store.default().backend())?;
++    for config in store.configs() {
++        validate_backend(config.backend())?;
++    }
++    Ok(())
++}
++
++fn validate_backend(backend: espanso_config::config::Backend) -> Result<()> {
++    if !matches!(backend, espanso_config::config::Backend::Inject) {
++        bail!("inject-only profile forbids automatic or clipboard backend in any config");
++    }
++    Ok(())
++}
++
++pub fn validate_store(store: &dyn MatchStore) -> Result<()> {
++    validate_set(store.query(&store.loaded_paths()))
++}
++
++fn validate_set(set: MatchSet<'_>) -> Result<()> {
++    if !set.global_vars.is_empty() {
++        bail!("inject-only profile forbids global variables");
++    }
++    for item in set.matches {
++        match &item.cause {
++            MatchCause::Trigger(cause) if !cause.triggers.is_empty()
++                && cause.triggers.iter().all(|s| !s.is_empty()) => {}
++            _ => bail!("inject-only profile requires nonempty literal triggers"),
++        }
++        match &item.effect {
++            MatchEffect::Text(text) if text.vars.is_empty()
++                && matches!(text.format, TextFormat::Plain)
++                && !matches!(text.force_mode, Some(TextInjectMode::Clipboard))
++                && !text.replace.contains("{{") && !text.replace.contains("}}")
++                && !text.replace.contains("$|") => {}
++            _ => bail!("inject-only profile requires plain literal key replacement"),
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use espanso_config::matches::{Match, TriggerCause, TextEffect, Variable,
++        RegexCause, ImageEffect};
++
++    fn literal() -> Match {
++        Match { cause: MatchCause::Trigger(TriggerCause {
++                triggers: vec!["fixture".into()], ..Default::default() }),
++            effect: MatchEffect::Text(TextEffect {
++                replace: "Fixture".into(), force_mode: Some(TextInjectMode::Keys),
++                ..Default::default() }), ..Default::default() }
++    }
++    fn check(item: &Match) -> Result<()> {
++        validate_set(MatchSet { matches: vec![item], global_vars: vec![] })
++    }
++
++    #[test]
++    fn production_app_provider_never_queries_desktop() {
++        let provider = app_info_provider();
++        let info = provider.get_info();
++        assert!(info.title.is_none() && info.exec.is_none() && info.class.is_none());
++    }
++
++    #[test]
++    fn exact_production_renderer_has_no_dynamic_extensions() {
++        use espanso_render::{Renderer, Template, Context, RenderOptions, RenderResult};
++        let renderer = renderer();
++        let literal = Template { body: "Finite café".into(), ..Default::default() };
++        assert!(matches!(renderer.render(&literal, &Context::default(), &RenderOptions::default()),
++            RenderResult::Success(text) if text == "Finite café"));
++        for kind in ["shell", "script", "clipboard", "form", "choice", "date", "echo", "random"] {
++            let template = Template { body: "{{fixture}}".into(), vars: vec![espanso_render::Variable {
++                name: "fixture".into(), var_type: kind.into(), ..Default::default()
++            }], ..Default::default() };
++            assert!(matches!(renderer.render(&template, &Context::default(), &RenderOptions::default()),
++                RenderResult::Error(_)), "extension {kind} must not resolve");
++        }
++    }
++
++    #[test]
++    fn backend_must_be_explicit_key_injection_in_every_config() {
++        use espanso_config::config::Backend;
++        assert!(validate_backend(Backend::Inject).is_ok());
++        assert!(validate_backend(Backend::Auto).is_err());
++        assert!(validate_backend(Backend::Clipboard).is_err());
++    }
++
++    #[test]
++    fn complete_loaded_store_is_validated_not_just_active_group() {
++        struct Store { items: Vec<Match> }
++        impl MatchStore for Store {
++            fn loaded_paths(&self) -> Vec<String> { vec!["first".into(), "hidden".into()] }
++            fn query(&self, paths: &[String]) -> MatchSet<'_> {
++                assert_eq!(paths, &["first", "hidden"]);
++                MatchSet { matches: self.items.iter().collect(), global_vars: vec![] }
++            }
++        }
++        let mut invalid = literal();
++        invalid.effect = MatchEffect::Image(ImageEffect::default());
++        assert!(validate_store(&Store { items: vec![literal(), invalid] }).is_err());
++    }
++
++    #[test]
++    fn empty_dormant_and_literal_profiles_pass_validation_only() {
++        assert!(validate_set(MatchSet { matches: vec![], global_vars: vec![] }).is_ok());
++        assert!(check(&literal()).is_ok());
++        let mut item = literal();
++        item.effect = MatchEffect::Text(TextEffect {
++            replace: "Finite unicode: café".into(), ..Default::default() });
++        assert!(check(&item).is_ok());
++    }
++
++    #[test]
++    fn global_or_match_variables_deny_before_rendering() {
++        let variable = Variable { var_type: "shell".into(), ..Default::default() };
++        assert!(validate_set(MatchSet { matches: vec![], global_vars: vec![&variable] }).is_err());
++        for kind in ["shell", "script", "clipboard", "form", "choice", "date", "echo", "random", "unknown"] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect {
++                text.vars.push(Variable { var_type: kind.into(), ..Default::default() });
++            }
++            assert!(check(&item).is_err(), "variable type {kind} must deny");
++        }
++    }
++
++    #[test]
++    fn template_cursor_html_markdown_clipboard_image_deny() {
++        for replace in ["{{fixture}}", "prefix{{", "suffix}}", "cursor$|tail"] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect { text.replace = replace.into(); }
++            assert!(check(&item).is_err());
++        }
++        for format in [TextFormat::Html, TextFormat::Markdown] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect { text.format = format; }
++            assert!(check(&item).is_err());
++        }
++        let mut item = literal();
++        if let MatchEffect::Text(text) = &mut item.effect { text.force_mode = Some(TextInjectMode::Clipboard); }
++        assert!(check(&item).is_err());
++        item.effect = MatchEffect::Image(ImageEffect::default());
++        assert!(check(&item).is_err());
++        item.effect = MatchEffect::None;
++        assert!(check(&item).is_err());
++    }
++
++    #[test]
++    fn regex_none_and_empty_triggers_deny() {
++        let mut item = literal();
++        item.cause = MatchCause::None;
++        assert!(check(&item).is_err());
++        item.cause = MatchCause::Regex(RegexCause { regex: ".*".into() });
++        assert!(check(&item).is_err());
++        for triggers in [vec![], vec![String::new()], vec!["ok".into(), String::new()]] {
++            item.cause = MatchCause::Trigger(TriggerCause { triggers, ..Default::default() });
++            assert!(check(&item).is_err());
++        }
++    }
++}
+diff --git a/espanso/src/cli/worker/mod.rs b/espanso/src/cli/worker/mod.rs
+index 12d2756..1f1cddf 100644
+--- a/espanso/src/cli/worker/mod.rs
++++ b/espanso/src/cli/worker/mod.rs
+@@ -39,8 +39,11 @@ mod config;
+ mod context;
+ mod daemon_monitor;
+ mod engine;
++#[cfg(not(feature = "southbag-inject-only"))]
+ mod ipc;
+ mod match_cache;
++#[cfg(feature = "southbag-inject-only")]
++mod finite_profile;
+ mod secure_input;
+ mod stats_recorder;
+ mod ui;
+@@ -50,7 +53,7 @@ pub fn new() -> CliModule {
+     CliModule {
+         requires_paths: true,
+         requires_config: true,
+-        requires_linux_capabilities: true,
++        requires_linux_capabilities: !cfg!(feature = "southbag-inject-only"),
+         enable_logs: true,
+         log_mode: super::LogMode::AppendOnly,
+         subcommand: "worker".to_string(),
+@@ -83,6 +86,14 @@ fn worker_main(args: CliModuleArgs) -> i32 {
+         .match_store
+         .expect("missing match store in worker main");
+ 
++    // Validate the complete loaded rule set before engine/detector/IPC setup.
++    #[cfg(feature = "southbag-inject-only")]
++    if let Err(error) = finite_profile::validate_configs(&*config_store)
++        .and_then(|_| finite_profile::validate_store(&*match_store)) {
++        error!("refusing non-finite inject-only profile: {error}");
++        return WORKER_GENERAL_ERROR;
++    }
++
+     // TODO: show config loading errors in a GUI, if any
+ 
+     let use_evdev_backend = if cfg!(feature = "wayland") {
+@@ -143,8 +154,13 @@ fn worker_main(args: CliModuleArgs) -> i32 {
+     .expect("unable to initialize engine");
+ 
+     // Setup the IPC server
++    #[cfg(not(feature = "southbag-inject-only"))]
+     ipc::initialize_and_spawn(&paths.runtime, engine_exit_notify.clone(), ipc_event_notify)
+         .expect("unable to initialize IPC server");
++    // Dedicated worker lifecycle belongs to the stop-only system broker. No
++    // local socket may trigger expansion, enable/toggle, or worker shutdown.
++    #[cfg(feature = "southbag-inject-only")]
++    drop(ipc_event_notify);
+ 
+     // If specified, automatically monitor the daemon status and
+     // terminate the worker if the daemon terminates
+diff --git a/espanso/src/ipc.rs b/espanso/src/ipc.rs
+index 41df589..2a6d951 100644
+--- a/espanso/src/ipc.rs
++++ b/espanso/src/ipc.rs
+@@ -60,10 +60,34 @@ pub fn create_ipc_client_to_daemon(runtime_dir: &Path) -> Result<impl IPCClient<
+ }
+ 
+ fn create_ipc_server(runtime_dir: &Path, name: &str) -> Result<impl IPCServer<IPCEvent>> {
++    // Guard before any transport initialization or runtime path access.
++    if cfg!(feature = "southbag-inject-only") {
++        anyhow::bail!("IPC unavailable in Southbag inject-only build");
++    }
+     espanso_ipc::server(&format!("espanso{name}"), runtime_dir)
+ }
+ 
+ fn create_ipc_client(runtime_dir: &Path, target_process: &str) -> Result<impl IPCClient<IPCEvent>> {
++    // Guard before any transport initialization or runtime path access.
++    if cfg!(feature = "southbag-inject-only") {
++        anyhow::bail!("IPC unavailable in Southbag inject-only build");
++    }
+     let client = espanso_ipc::client(&format!("espanso{target_process}"), runtime_dir)?;
+     Ok(client)
+ }
++
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod southbag_no_ipc_tests {
++    use super::*;
++
++    #[test]
++    fn all_ipc_constructors_reject_before_transport() {
++        // No path creation is needed: rejection must precede even an invalid
++        // runtime directory. These calls never initialize or run a worker.
++        let path = Path::new("/proc/invalid-southbag-ipc-runtime");
++        assert_eq!(create_daemon_ipc_server(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_worker_ipc_server(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_ipc_client_to_worker(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_ipc_client(path, "daemonv2").err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++    }
++}

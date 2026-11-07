@@ -1,0 +1,143 @@
+#!/bin/sh
+# Root-owned lifecycle broker for the dedicated expander (input injection)
+# worker. Owns the worker's inhibit state and stop barrier. There is NO
+# activation path here on purpose.
+#
+# Why no start verb: starting the worker requires a one-shot protected
+# authorization that only broker-owned verification of an account proof may
+# create (see the reviewed control-path design). Caller uid equality, a
+# customer-written note, a helper's exit code or IPC bytes are not that
+# authority. Until a broker-owned verifier exists, every start/authorize
+# verb is refused and the worker stays inhibited from boot. A partial
+# broker that exposes activation without that authority must never ship.
+#
+# What unprivileged callers may do: request inhibit with the current
+# generation. That can only stop and inhibit the worker - denial of service
+# at worst, never activation. The session lock surface calls it before
+# presenting any credential prompt: an OK return means the worker is
+# stopped and its cgroup is empty.
+set -eu
+umask 077
+
+UNIT=${SOUTHBAG_BROKER_UNIT:-southbag-espanso.service}
+SYSTEMCTL=${SOUTHBAG_BROKER_SYSTEMCTL:-systemctl}
+CGROUP_ROOT=${SOUTHBAG_BROKER_CGROUP_ROOT:-/sys/fs/cgroup}
+STATE=${SOUTHBAG_BROKER_STATE:-/run/southbag-input-broker}
+STOP_DEADLINE=${SOUTHBAG_BROKER_STOP_DEADLINE:-15}
+# Test-only adapter; the image always uses the real default (root required).
+ALLOW_NONROOT=${SOUTHBAG_BROKER_ALLOW_NONROOT:-0}
+
+mkdir -p "$STATE"
+chmod 700 "$STATE"
+
+# State transitions are serialized through a root-owned lock.
+exec 8>"$STATE/broker.lock"
+flock -x 8
+
+generation() { cat "$STATE/generation" 2>/dev/null || printf '0\n'; }
+set_state() { printf '%s\n' "$1" >"$STATE/state"; }
+get_state() { cat "$STATE/state" 2>/dev/null || printf 'inhibited\n'; }
+
+# One monotonic budget for every status/show/stop call, including the first
+# probe. timeout bounds an unresponsive adapter and its descendants. This is
+# not a bound on an uninterruptible kernel task; such a condition fails closed.
+monotonic() { awk '{print $1}' /proc/uptime; }
+budget() { awk -v end="$deadline" -v now="$(monotonic)" 'BEGIN { n=end-now; if(n<=0) exit 1; printf "%.2f",n }'; }
+ctl() {
+ remaining=$(budget) || return 124
+ timeout --kill-after=.2s "${remaining}s" "$SYSTEMCTL" "$@" 8>&-
+}
+unit_active() {
+ ctl is-active --quiet "$UNIT" >/dev/null 2>&1
+ rc=$?
+ case $rc in
+  0) return 0 ;;
+  1|3|4) return 1 ;;
+  *) return 2 ;;
+ esac
+}
+empty_group() {
+ [ -n "$1" ] || return 0
+ # Reject unexpected paths instead of inspecting outside the cgroup root.
+ case "$1" in /*) ;; *) return 1;; esac
+ case "/$1/" in */../*|*/./*) return 1;; esac
+ ev="$CGROUP_ROOT$1/cgroup.events"
+ [ ! -e "$ev" ] && return 0
+ [ -f "$ev" ] && [ -r "$ev" ] && grep -q '^populated 0$' "$ev"
+}
+stop_barrier() {
+ set_state stopping
+ case "$STOP_DEADLINE" in ''|*[!0-9]*|0) set_state failed; return 1;; esac
+ deadline=$(awk -v now="$(monotonic)" -v seconds="$STOP_DEADLINE" 'BEGIN { printf "%.2f",now+seconds }')
+ unit_active && arc=0 || arc=$?
+ if [ "$arc" = 2 ]; then set_state failed; return 1; fi
+ captured=$(ctl show "$UNIT" --property=ControlGroup --value 2>/dev/null) || { set_state failed; return 1; }
+ if [ "$arc" = 0 ]; then
+  [ -n "$captured" ] || { set_state failed; return 1; }
+  # Do not inherit the broker lock. ctl stop and all probes share deadline.
+  ctl stop "$UNIT" >/dev/null 2>&1 &
+  stopper=$!
+  while :; do
+   unit_active && arc=0 || arc=$?
+   if [ "$arc" = 2 ] || ! budget >/dev/null; then
+    # Own unreaped child, never a PID discovered by process-name matching.
+    kill "$stopper" 2>/dev/null || true
+    wait "$stopper" 2>/dev/null || true
+    set_state failed; return 1
+   fi
+   if [ "$arc" = 1 ] && empty_group "$captured"; then break; fi
+   sleep .05
+  done
+  # The background adapter is itself timeout-bounded by the same deadline.
+  wait "$stopper" 2>/dev/null || { set_state failed; return 1; }
+ fi
+ # Recheck even when initially inactive. A reappearing active unit, changed
+ # populated cgroup, failed adapter or exhausted budget cannot report ready.
+ unit_active && arc=0 || arc=$?
+ [ "$arc" = 1 ] || { set_state failed; return 1; }
+ current_cg=$(ctl show "$UNIT" --property=ControlGroup --value 2>/dev/null) || { set_state failed; return 1; }
+ if ! empty_group "$captured" || ! empty_group "$current_cg"; then set_state failed; return 1; fi
+ unit_active && arc=0 || arc=$?
+ if [ "$arc" != 1 ] || ! budget >/dev/null; then set_state failed; return 1; fi
+ set_state inhibited
+ return 0
+}
+
+want_gen() {
+ cur=$(generation)
+ [ -n "${2:-}" ] && [ "$2" = "$cur" ] && [ "$cur" != 0 ] && return 0
+ echo "stale or unknown generation" >&2
+ exit 1
+}
+
+case "${1:-}" in
+ begin-generation)
+  # Root-owned lifecycle authority only; no public generation setter.
+  [ "$ALLOW_NONROOT" = 1 ] || [ "$(id -u)" = 0 ] || { echo "begin-generation is root-only" >&2; exit 1; }
+  stop_barrier
+  g=$(generation)
+  g=$((g+1))
+  printf '%s\n' "$g" >"$STATE/generation"
+  printf '%s\n' "$g"
+  ;;
+ inhibit)
+  # OK return is the prerequisite for presenting a credential prompt.
+  want_gen "$@"
+  stop_barrier
+  ;;
+ current)
+  # Read-only view so unprivileged lifecycle callers can learn the current
+  # generation before inhibiting. No transition, no authority.
+  printf 'generation=%s state=%s\n' "$(generation)" "$(get_state)"
+  ;;
+ status)
+  want_gen "$@"
+  printf 'generation=%s state=%s\n' "$(generation)" "$(get_state)"
+  ;;
+ *)
+  # Deliberately no start/authorize-unlock verb: no protected auth
+  # authority exists to grant one.
+  echo "usage: southbag-input-broker begin-generation|inhibit GEN|status GEN|current" >&2
+  exit 2
+  ;;
+esac

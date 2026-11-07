@@ -1,11 +1,13 @@
 <script lang="ts">
   import { appById } from "./apps/registry";
+  import Browser from "./apps/Browser.svelte";
   import type { AppContext } from "./apps/types";
   import type { Customer } from "./platform/identity";
 
-  let { appId, customer }: { appId: string; customer: Customer } = $props();
+  let { appId, customer }: { appId: string; customer: Customer | null } = $props();
 
   const app = $derived(appById(appId));
+  const go = $derived(new URLSearchParams(location.search).get("go"));
   let root = $state<HTMLElement | null>(null);
 
   // On the device this page is the whole window, and the compositor drew the
@@ -24,11 +26,13 @@
   });
 
   $effect(() => {
-    document.title = app?.name ?? "Southbag";
+    document.title = appId === "browser" ? "Southbag Browser" : (app?.name ?? "Southbag");
   });
 </script>
 
-{#if !app}
+{#if appId === "browser"}
+  <Browser {go} />
+{:else if !app}
   <div class="pending">
     <p class="name">Not found</p>
     <p class="note">This device has no app by that name.</p>

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Optional locally staged input only. Packages.chroot installs too early for
+# our customer-bound identity checks; this runs after the customer/uid hooks.
+set -eu
+package=/tmp/southbag-inject-candidate.deb
+[ -f "$package" ] || exit 0
+actual=$(sha256sum "$package" | cut -d' ' -f1)
+case "$actual" in
+ 57354fa506d2d1d5319bb43384049f32f20127d7cc2ecc6508442fe5a53a4d21|3b63aeaa438de7589ebd2ce6823ad01fcb0762e3d635da6c23986e13879e9e50) ;;
+ *)
+ echo 'Unrecognized dormant image package' >&2; exit 1 ;;
+esac
+dpkg -i "$package"
+rm -f "$package"
+# No service enable/start/restart, module loading or device grants.

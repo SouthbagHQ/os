@@ -1,0 +1,16 @@
+#!/bin/sh
+# Build-time safety mask for the Southbag update channel. The channel is
+# activation-gated: until the signed Pages repository exists, its Release
+# file 404s, and ANY hook's apt-get update then fails hard and kills the
+# whole image build (first seen in 0016, then 0022). Mask the sources entry
+# for the duration of the build; hook 0026 restores it and still decides
+# the channel's final in-image state (kept only when the archive keyring
+# is present). Runtime behavior is unaffected either way.
+set -eu
+
+sources=/etc/apt/sources.list.d/southbag.sources
+
+if [ -f "$sources" ]; then
+  mv "$sources" /root/.southbag.sources.buildmask
+  echo "southbag-updates: channel masked for the build (0026 restores/decides)."
+fi

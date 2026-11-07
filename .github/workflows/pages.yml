@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # Re-signs and republishes the apt repository weekly so its Valid-Until
+  # (30 days) never lapses between pushes. GitHub pauses schedules after 60
+  # days of repository inactivity; any push or manual run restarts it.
+  schedule:
+    - cron: "23 4 * * 2"
 
 permissions:
   contents: read
@@ -25,6 +30,62 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
+
+      # The signed apt repository ships inside the same Pages site under
+      # /apt/ - a Pages deploy replaces the whole site, so it cannot be a
+      # second workflow. The private signing key is a repository secret,
+      # placed once by a maintainer (packaging/gen-signing-key.sh, see
+      # docs/updates.md); until then the site deploys without /apt/.
+      - name: Check for the signing key
+        id: signing
+        env:
+          SOUTHBAG_APT_SIGNING_KEY: ${{ secrets.SOUTHBAG_APT_SIGNING_KEY }}
+        run: |
+          if [ -n "$SOUTHBAG_APT_SIGNING_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SOUTHBAG_APT_SIGNING_KEY is not set; deploying without the apt repository. See docs/updates.md."
+          fi
+
+      - name: Build, sign and verify the apt repository
+        if: steps.signing.outputs.present == 'true'
+        env:
+          SOUTHBAG_APT_SIGNING_KEY: ${{ secrets.SOUTHBAG_APT_SIGNING_KEY }}
+          # Pin a Southbag Browser release tag to publish the browser
+          # package; keep it identical to SOUTHBAG_BROWSER_VERSION in
+          # image/build.sh. Empty ships no browser package. v1.0.0 predates
+          # app windows and must never be pinned; the current app/session
+          # fixes live in PRs and have no release yet.
+          SOUTHBAG_BROWSER_VERSION: ""
+        run: |
+          bun run build:device
+          mkdir -p out/pool dist/apt
+          # bash invocation, not ./: file modes are not
+          # guaranteed to survive publication.
+          bash packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          bash packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
+          # lockd must compile against the TARGET userland: Debian trixie
+          # ships libjpeg62-turbo (libjpeg.so.62) where ubuntu-latest has only
+          # libjpeg-turbo8 - a binary linked on the host would not load on the
+          # device, and libjpeg62-turbo-dev does not exist on ubuntu-latest at
+          # all. packages.yml uses a debian:trixie container job for the same
+          # reason; the Pages actions need the runner's node, so this job
+          # stays on the host and the lockd build runs in a trixie docker
+          # container with the exact hook-0016 -dev package list.
+          if [ -f image/config/includes.chroot/opt/southbag-lockd-src/southbag-lockd.c ]; then
+            VERSION="0.1.0+${GITHUB_SHA:0:7}"
+            docker run --rm -e "VERSION=$VERSION" -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -w "$GITHUB_WORKSPACE" debian:trixie bash -c '
+              set -euo pipefail
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends build-essential pkg-config libwayland-dev wayland-protocols libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
+              bash packaging/build-lockd-deb.sh "$VERSION" out/pool
+            '
+          fi
+          bash packaging/build-repo.sh out/pool dist/apt
+          bash packaging/verify-repo.sh dist/apt
+          rm -rf out/pool
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

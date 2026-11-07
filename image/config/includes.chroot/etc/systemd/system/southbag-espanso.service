@@ -1,0 +1,44 @@
+[Unit]
+Description=Southbag dedicated inject-only worker (activation unavailable)
+After=southbag-input-broker.service
+Requires=southbag-input-broker.service
+
+[Service]
+Type=exec
+User=southbag-inject
+Group=southbag-inject
+# Hard denial, not a caller-controlled marker. Replace only after the trusted
+# broker verifier, per-physical-device grants and hotplug/modifier gates pass.
+# No shell/client/root-owned note is an authentication proof.
+ExecCondition=/bin/false
+ExecStart=/opt/southbag/bin/espanso worker
+Environment=HOME=/var/lib/southbag-inject
+Environment=ESPANSO_CONFIG_DIR=/etc/southbag/espanso
+Environment=ESPANSO_PACKAGE_DIR=/etc/southbag/espanso/packages
+Environment=ESPANSO_RUNTIME_DIR=/var/lib/southbag-inject
+UnsetEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
+Environment=XDG_CACHE_HOME=/var/lib/southbag-inject/cache
+Environment=XDG_DATA_HOME=/var/lib/southbag-inject/data
+StateDirectory=southbag-inject
+StateDirectoryMode=0700
+UMask=0077
+DevicePolicy=closed
+# No DeviceAllow entries while dormant. Both the cgroup device filter and
+# dedicated-identity DAC deny input access. Future per-physical-device grants
+# need separate review; a broad char-input rule must not replace that gate.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+KillMode=control-group
+TimeoutStopSec=15
+Restart=no
+# No [Install]: no boot enablement, dependency activation or restart policy.

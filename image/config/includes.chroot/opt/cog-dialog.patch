@@ -1,0 +1,706 @@
+diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-platform-wl.c b/platform/wayland/cog-platform-wl.c
+--- a/platform/wayland/cog-platform-wl.c	2026-11-06 04:47:23.151778050 +1100
++++ b/platform/wayland/cog-platform-wl.c	2026-11-06 07:51:59.025804285 +1100
+@@ -39,6 +39,7 @@
+ #include "cog-im-context-wl-v1.h"
+ #include "cog-im-context-wl.h"
+ #include "cog-popup-menu-wl.h"
++#include "cog-script-dialog-wl.h"
+ 
+ #include "fullscreen-shell-unstable-v1-client.h"
+ #include "linux-dmabuf-unstable-v1-client.h"
+@@ -283,6 +284,27 @@
+     .configured = false,
+ };
+ 
++/* Script-dialog popup state: one active dialog plus a FIFO of pending
++ * WebKitScriptDialogs. No grab is taken (alerts fire without an input
++ * serial); modality is enforced by routing keys/pointer presses to the
++ * dialog while it is up and never dismissing on outside presses. */
++static struct {
++    WebKitScriptDialog *wk_dialog;
++    CogScriptDialog *dialog;
++    struct wl_surface *wl_surface;
++    struct xdg_surface *xdg_surface;
++    struct xdg_popup *xdg_popup;
++    struct xdg_positioner *xdg_positioner;
++    struct wl_shell_surface *shell_surface;
++} script_dialog_data = { 0, };
++static GQueue *pending_script_dialogs = NULL;
++static guint script_dialog_modal_hold_source = 0;
++static void create_script_dialog_popup(WebKitScriptDialog *dialog);
++static void destroy_script_dialog_popup(void);
++static void display_script_dialog_popup(void);
++static void script_dialog_modal_hold_start(void);
++static void script_dialog_modal_hold_cancel(void);
++
+ 
+ static struct {
+     struct xkb_context* context;
+@@ -943,6 +965,25 @@
+         }
+     }
+ 
++    if (script_dialog_data.wl_surface || script_dialog_modal_hold_source) {
++        if (script_dialog_data.wl_surface && !!state &&
++            wl_data.pointer.surface == script_dialog_data.wl_surface) {
++            if (cog_script_dialog_handle_pointer_press(script_dialog_data.dialog, event.x, event.y)) {
++                destroy_script_dialog_popup();
++                if (pending_script_dialogs && !g_queue_is_empty(pending_script_dialogs))
++                    create_script_dialog_popup(g_queue_pop_head(pending_script_dialogs));
++                else
++                    script_dialog_modal_hold_start();
++            } else {
++                display_script_dialog_popup();
++            }
++        }
++        /* presses anywhere else are swallowed: no outside dismissal; all
++         * presses are also swallowed during the modality hold between
++         * consecutive dialogs */
++        return;
++    }
++
+     wpe_view_backend_dispatch_pointer_event(wpe_view_data.backend, &event);
+ }
+ 
+@@ -1171,6 +1212,23 @@
+     if (xkb_data.state == NULL)
+         return;
+ 
++    if (script_dialog_data.wl_surface || script_dialog_modal_hold_source) {
++        if (script_dialog_data.wl_surface && state == WL_KEYBOARD_KEY_STATE_PRESSED) {
++            uint32_t dialog_keysym = xkb_state_key_get_one_sym (xkb_data.state, key);
++            if (cog_script_dialog_handle_key(script_dialog_data.dialog, dialog_keysym)) {
++                destroy_script_dialog_popup();
++                if (pending_script_dialogs && !g_queue_is_empty(pending_script_dialogs))
++                    create_script_dialog_popup(g_queue_pop_head(pending_script_dialogs));
++                else
++                    script_dialog_modal_hold_start();
++            } else {
++                display_script_dialog_popup();
++            }
++        }
++        return; /* all keys swallowed while a dialog is up, and during the
++                 * modality hold between consecutive dialogs */
++    }
++
+     uint32_t keysym = xkb_state_key_get_one_sym (xkb_data.state, key);
+     uint32_t unicode = xkb_state_key_get_utf32 (xkb_data.state, key);
+ 
+@@ -2612,9 +2670,220 @@
+ }
+ 
+ static void
++script_dialog_xdg_surface_on_configure(void *data, struct xdg_surface *surface, uint32_t serial)
++{
++    xdg_surface_ack_configure(surface, serial);
++    /* the shared option-menu listener guards on popup_data.xdg_surface and
++     * would never paint us: first configure triggers our first display */
++    if (script_dialog_data.xdg_surface == surface)
++        display_script_dialog_popup();
++}
++
++static const struct xdg_surface_listener script_dialog_xdg_surface_listener = {
++    .configure = script_dialog_xdg_surface_on_configure,
++};
++
++static void
++script_dialog_xdg_popup_on_done(void *data, struct xdg_popup *xdg_popup)
++{
++    /* Compositor dismissed the popup (no grab is taken, so this should not
++     * happen). Tear down WITHOUT answering: destroy closes the dialog
++     * cancel-equivalent, never an implicit OK; then serve any queued dialog. */
++    destroy_script_dialog_popup();
++    if (pending_script_dialogs && !g_queue_is_empty(pending_script_dialogs))
++        create_script_dialog_popup(g_queue_pop_head(pending_script_dialogs));
++    else
++        script_dialog_modal_hold_start();
++}
++
++static void
++script_dialog_xdg_popup_on_configure(void *data, struct xdg_popup *xdg_popup,
++                                     int32_t x, int32_t y, int32_t width, int32_t height)
++{
++    /* position/size are compositor suggestions; the dialog keeps its own
++     * geometry. Handler must exist: libwayland aborts the client when an
++     * event arrives for a NULL listener opcode. */
++}
++
++static const struct xdg_popup_listener script_dialog_xdg_popup_listener = {
++    .configure = script_dialog_xdg_popup_on_configure,
++    .popup_done = script_dialog_xdg_popup_on_done,
++};
++
++static void
++display_script_dialog_popup(void)
++{
++    if (!script_dialog_data.wl_surface)
++        return;
++    struct wl_buffer *buffer = cog_script_dialog_get_buffer(script_dialog_data.dialog);
++    wl_surface_attach(script_dialog_data.wl_surface, buffer, 0, 0);
++    wl_surface_damage(script_dialog_data.wl_surface, 0, 0, INT32_MAX, INT32_MAX);
++    wl_surface_commit(script_dialog_data.wl_surface);
++}
++
++static void
++create_script_dialog_popup(WebKitScriptDialog *dialog)
++{
++    script_dialog_data.wk_dialog = dialog; /* owned */
++    int scale = wl_data.current_output ? wl_data.current_output->scale : 1;
++    script_dialog_data.dialog = cog_script_dialog_create(dialog, wl_data.shm, scale);
++
++    int width = cog_script_dialog_get_width(script_dialog_data.dialog) / scale;
++    int height = cog_script_dialog_get_height(script_dialog_data.dialog) / scale;
++
++    script_dialog_data.wl_surface = wl_compositor_create_surface(wl_data.compositor);
++    g_assert(script_dialog_data.wl_surface);
++
++#ifdef WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION
++    if (wl_surface_get_version(script_dialog_data.wl_surface) >= WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION)
++        wl_surface_set_buffer_scale(script_dialog_data.wl_surface, scale);
++#endif
++
++    if (wl_data.xdg_shell != NULL) {
++        script_dialog_data.xdg_positioner = xdg_wm_base_create_positioner(wl_data.xdg_shell);
++        g_assert(script_dialog_data.xdg_positioner);
++        xdg_positioner_set_size(script_dialog_data.xdg_positioner, width, height);
++        /* centered: anchor rect is the dialog-sized box in the middle */
++        xdg_positioner_set_anchor_rect(script_dialog_data.xdg_positioner,
++                                       (win_data.width - width) / 2, (win_data.height - height) / 2,
++                                       width, height);
++        script_dialog_data.xdg_surface = xdg_wm_base_get_xdg_surface(wl_data.xdg_shell,
++                                                                     script_dialog_data.wl_surface);
++        g_assert(script_dialog_data.xdg_surface);
++        xdg_surface_add_listener(script_dialog_data.xdg_surface, &script_dialog_xdg_surface_listener, NULL);
++        script_dialog_data.xdg_popup = xdg_surface_get_popup(script_dialog_data.xdg_surface,
++                                                             win_data.xdg_surface,
++                                                             script_dialog_data.xdg_positioner);
++        g_assert(script_dialog_data.xdg_popup);
++        xdg_popup_add_listener(script_dialog_data.xdg_popup, &script_dialog_xdg_popup_listener, NULL);
++        /* no xdg_popup_grab: alerts fire without an input serial; modality
++         * is enforced by input routing instead */
++        wl_surface_commit(script_dialog_data.wl_surface);
++    } else if (wl_data.shell != NULL) {
++        script_dialog_data.shell_surface = wl_shell_get_shell_surface(wl_data.shell,
++                                                                      script_dialog_data.wl_surface);
++        g_assert(script_dialog_data.shell_surface);
++        wl_shell_surface_add_listener(script_dialog_data.shell_surface,
++                                      &shell_popup_surface_listener, NULL);
++        wl_shell_surface_set_popup(script_dialog_data.shell_surface,
++                                   wl_data.seat, wl_data.event_serial,
++                                   win_data.wl_surface,
++                                   (win_data.width - width) / 2, (win_data.height - height) / 2, 0);
++        display_script_dialog_popup();
++    }
++}
++
++/* Modality hold: when the last queued dialog is dismissed, the page may
++ * not have raised its next alert() yet (e.g. a dialog sequence awaiting
++ * between calls). Without a hold, input landing in that window falls
++ * through to the page and can re-activate whichever control still has
++ * focus - observed on-device as a focused Accept button re-starting the
++ * sequence when an Enter arrived between two dialogs. Hold modality
++ * briefly; a newly raised dialog cancels the hold, otherwise it expires
++ * and input returns to the page. */
++#define SCRIPT_DIALOG_MODAL_HOLD_MS 500
++
++static gboolean
++script_dialog_modal_hold_expired(gpointer user_data)
++{
++    script_dialog_modal_hold_source = 0;
++    return G_SOURCE_REMOVE;
++}
++
++static void
++script_dialog_modal_hold_start(void)
++{
++    script_dialog_modal_hold_cancel();
++    script_dialog_modal_hold_source =
++        g_timeout_add(SCRIPT_DIALOG_MODAL_HOLD_MS, script_dialog_modal_hold_expired, NULL);
++}
++
++static void
++script_dialog_modal_hold_cancel(void)
++{
++    if (script_dialog_modal_hold_source) {
++        g_source_remove(script_dialog_modal_hold_source);
++        script_dialog_modal_hold_source = 0;
++    }
++}
++
++static void
++destroy_script_dialog_popup(void)
++{
++    g_clear_pointer(&script_dialog_data.dialog, cog_script_dialog_destroy);
++    g_clear_pointer(&script_dialog_data.wk_dialog, webkit_script_dialog_unref);
++    g_clear_pointer(&script_dialog_data.xdg_popup, xdg_popup_destroy);
++    g_clear_pointer(&script_dialog_data.xdg_surface, xdg_surface_destroy);
++    g_clear_pointer(&script_dialog_data.xdg_positioner, xdg_positioner_destroy);
++    g_clear_pointer(&script_dialog_data.shell_surface, wl_shell_surface_destroy);
++    g_clear_pointer(&script_dialog_data.wl_surface, wl_surface_destroy);
++}
++
++static void
++retire_script_dialogs(void)
++{
++    script_dialog_modal_hold_cancel();
++    if (script_dialog_data.wl_surface)
++        destroy_script_dialog_popup();
++    if (pending_script_dialogs) {
++        WebKitScriptDialog *queued;
++        while ((queued = g_queue_pop_head(pending_script_dialogs))) {
++            /* close cancel-equivalent, then drop our ref */
++            webkit_script_dialog_close(queued);
++            webkit_script_dialog_unref(queued);
++        }
++    }
++}
++
++static void
++on_web_view_load_changed_for_dialogs(WebKitWebView *view, WebKitLoadEvent load_event, gpointer user_data)
++{
++    if (load_event == WEBKIT_LOAD_STARTED)
++        retire_script_dialogs();
++}
++
++static void
++on_web_view_close_for_dialogs(WebKitWebView *view, gpointer user_data)
++{
++    retire_script_dialogs();
++}
++
++static void
++on_web_view_destroyed_for_dialogs(gpointer data, GObject *dead_view)
++{
++    retire_script_dialogs();
++}
++
++static gboolean
++on_script_dialog(WebKitWebView *view, WebKitScriptDialog *dialog, gpointer user_data)
++{
++    /* PROMPT is deliberately not intercepted: this API cannot express a
++     * prompt cancel (JS null) - webkit_script_dialog_close() always
++     * completes prompts with a string (empty unless
++     * webkit_script_dialog_prompt_set_text was called). Rendering our own
++     * prompt would CHANGE semantics (Cancel could never yield null), so the
++     * engine keeps its stock behavior for prompts. */
++    if (webkit_script_dialog_get_dialog_type(dialog) == WEBKIT_SCRIPT_DIALOG_PROMPT)
++        return FALSE;
++    script_dialog_modal_hold_cancel();
++    if (script_dialog_data.wl_surface) {
++        if (!pending_script_dialogs)
++            pending_script_dialogs = g_queue_new();
++        g_queue_push_tail(pending_script_dialogs, webkit_script_dialog_ref(dialog));
++        return TRUE;
++    }
++    create_script_dialog_popup(webkit_script_dialog_ref(dialog));
++    return TRUE; /* handled: suppress any default */
++}
++
++static void
+ cog_wl_platform_init_web_view(CogPlatform *platform, WebKitWebView *view)
+ {
+     g_signal_connect (view, "show-option-menu", G_CALLBACK (on_show_option_menu), NULL);
++    g_signal_connect (view, "script-dialog", G_CALLBACK (on_script_dialog), NULL);
++    g_signal_connect (view, "load-changed", G_CALLBACK (on_web_view_load_changed_for_dialogs), NULL);
++    g_signal_connect (view, "close", G_CALLBACK (on_web_view_close_for_dialogs), NULL);
++    g_object_weak_ref (G_OBJECT (view), on_web_view_destroyed_for_dialogs, NULL);
+     COG_WL_PLATFORM(platform)->web_view = view;
+ }
+ 
+diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.c b/platform/wayland/cog-script-dialog-wl.c
+--- a/platform/wayland/cog-script-dialog-wl.c	1970-01-01 10:00:00.000000000 +1000
++++ b/platform/wayland/cog-script-dialog-wl.c	2026-11-06 04:56:18.844251408 +1100
+@@ -0,0 +1,339 @@
++/*
++ * cog-script-dialog-wl.c
++ * Southbag: rendered, actionable script dialogs for the wayland platform.
++ *
++ * Design rules (product requirement: Identity's consent acknowledgements
++ * must be genuinely rendered and deliberately dismissed):
++ *  - the message text is always rendered;
++ *  - nothing auto-closes or auto-confirms;
++ *  - keyboard is first-class: Tab/arrows move, Return activates, Escape
++ *    cancels where a cancel exists (never on ALERT);
++ *  - pointer press activates the button under it; there is no outside
++ *    dismissal.
++ *
++ * NOTE: PROMPT is not currently routed here by the platform (see
++ * on_script_dialog in cog-platform-wl.c): the WebKitScriptDialog API
++ * cannot express a prompt cancel (JS null), so prompts keep stock engine
++ * behavior. The PROMPT rendering path below is kept for future use.
++ */
++
++#include "cog-script-dialog-wl.h"
++
++#include "os-compatibility.h"
++#include <cairo.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <xkbcommon/xkbcommon-keysyms.h>
++
++#define DIALOG_WIDTH            480
++#define DIALOG_PADDING          20
++#define MESSAGE_TEXT_SIZE       16
++#define MESSAGE_LINE_HEIGHT     22
++#define MESSAGE_MAX_LINES       8
++#define BUTTON_HEIGHT           36
++#define BUTTON_WIDTH            140
++#define BUTTON_SPACING          16
++#define BUTTON_TEXT_SIZE        16
++
++#define MAX_BUTTONS 2
++
++struct _CogScriptDialog {
++    WebKitScriptDialog *dialog;
++    WebKitScriptDialogType type;
++
++    int shm_pool_fd;
++    int shm_pool_size;
++    void *shm_pool_data;
++    struct wl_shm_pool *shm_pool;
++
++    int width;
++    int height;
++    int scale;
++    int stride;
++
++    struct wl_buffer *buffer;
++    cairo_surface_t *cr_surface;
++    cairo_t *cr;
++
++    /* buttons: 0 = default (OK/Close), 1 = cancel (when present) */
++    struct {
++        int x, y, w, h;
++        const char *label;
++        bool is_cancel;
++    } buttons[MAX_BUTTONS];
++    int num_buttons;
++    int focused_button;
++
++    GPtrArray *pages; /* offsets into the dialog-owned message */
++    unsigned page;
++    bool answered;
++};
++
++static const char *
++wrap_message(cairo_t *cr, const char *text, char lines[][96], int *n_lines)
++{
++    /* Measure the same font used to paint, preserving UTF-8 boundaries. */
++    int line = 0, col = 0;
++    const char *p = text;
++    lines[0][0] = '\0';
++    cairo_set_font_size(cr, MESSAGE_TEXT_SIZE);
++    while (*p) {
++        if (*p == '\n') {
++            p++;
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
++        }
++        const char *next = g_utf8_next_char(p);
++        int len = next - p;
++        if (col + len >= 96) {
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
++        }
++        memcpy(lines[line] + col, p, len);
++        lines[line][col + len] = '\0';
++        cairo_text_extents_t ext;
++        cairo_text_extents(cr, lines[line], &ext);
++        if (col && ext.x_advance > DIALOG_WIDTH - 2 * DIALOG_PADDING) {
++            lines[line][col] = '\0';
++            if (line + 1 >= MESSAGE_MAX_LINES)
++                break;
++            lines[++line][0] = '\0'; col = 0;
++            continue;
++        }
++        col += len; p = next;
++    }
++    *n_lines = line + 1;
++    return p;
++}
++
++static void
++cog_script_dialog_paint(CogScriptDialog *sd)
++{
++    cairo_set_source_rgba(sd->cr, 0.12, 0.12, 0.12, 1);
++    cairo_rectangle(sd->cr, 0, 0, sd->width, sd->height);
++    cairo_fill(sd->cr);
++
++    cairo_save(sd->cr);
++    cairo_scale(sd->cr, sd->scale, sd->scale);
++
++    /* panel */
++    cairo_set_source_rgba(sd->cr, 1, 1, 1, 1);
++    cairo_rectangle(sd->cr, 0, 0, sd->width / sd->scale, sd->height / sd->scale);
++    cairo_fill(sd->cr);
++    cairo_set_source_rgba(sd->cr, 0, 0, 0, 1);
++    cairo_set_line_width(sd->cr, 2);
++    cairo_rectangle(sd->cr, 1, 1, sd->width / sd->scale - 2, sd->height / sd->scale - 2);
++    cairo_stroke(sd->cr);
++
++    /* message */
++    char lines[MESSAGE_MAX_LINES][96];
++    int n_lines = 0;
++    wrap_message(sd->cr, g_ptr_array_index(sd->pages, sd->page), lines, &n_lines);
++    cairo_set_font_size(sd->cr, MESSAGE_TEXT_SIZE);
++    cairo_set_source_rgba(sd->cr, 0, 0, 0, 1);
++    for (int i = 0; i < n_lines; i++) {
++        cairo_move_to(sd->cr, DIALOG_PADDING, DIALOG_PADDING + MESSAGE_LINE_HEIGHT * (i + 1) - 6);
++        cairo_show_text(sd->cr, lines[i]);
++    }
++
++    if (sd->pages->len > 1) {
++        char footer[80];
++        g_snprintf(footer, sizeof footer, "Page %u/%u (Page Up / Page Down)",
++                   sd->page + 1, sd->pages->len);
++        cairo_move_to(sd->cr, DIALOG_PADDING,
++                      DIALOG_PADDING + MESSAGE_LINE_HEIGHT * (MESSAGE_MAX_LINES + 1) - 6);
++        cairo_show_text(sd->cr, footer);
++    }
++    sd->buttons[0].label = sd->page + 1 < sd->pages->len ? "Next page" : "OK";
++
++    /* buttons */
++    for (int i = 0; i < sd->num_buttons; i++) {
++        cairo_set_source_rgba(sd->cr, i == sd->focused_button ? 0.6 : 0.9,
++                              i == sd->focused_button ? 0.75 : 0.9,
++                              i == sd->focused_button ? 1.0 : 0.9, 1);
++        cairo_rectangle(sd->cr, sd->buttons[i].x, sd->buttons[i].y,
++                        sd->buttons[i].w, sd->buttons[i].h);
++        cairo_fill_preserve(sd->cr);
++        cairo_set_source_rgba(sd->cr, 0, 0, 0, 1);
++        cairo_stroke(sd->cr);
++
++        cairo_text_extents_t ext;
++        cairo_set_font_size(sd->cr, BUTTON_TEXT_SIZE);
++        cairo_text_extents(sd->cr, sd->buttons[i].label, &ext);
++        cairo_move_to(sd->cr,
++                      sd->buttons[i].x + (sd->buttons[i].w - ext.width) / 2,
++                      sd->buttons[i].y + (sd->buttons[i].h + BUTTON_TEXT_SIZE) / 2 - 3);
++        cairo_show_text(sd->cr, sd->buttons[i].label);
++    }
++
++    cairo_restore(sd->cr);
++}
++
++static void
++answer(CogScriptDialog *sd, bool confirmed)
++{
++    if (sd->answered)
++        return;
++    sd->answered = true;
++    if (sd->type == WEBKIT_SCRIPT_DIALOG_CONFIRM ||
++        sd->type == WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM)
++        webkit_script_dialog_confirm_set_confirmed(sd->dialog, confirmed);
++    /* PROMPT v1: default text stands; webkit_script_dialog_prompt_set_text
++     * deliberately not called. */
++    webkit_script_dialog_close(sd->dialog);
++}
++
++CogScriptDialog *
++cog_script_dialog_create(WebKitScriptDialog *dialog, struct wl_shm *shm, int scale)
++{
++    CogScriptDialog *sd = g_new0(CogScriptDialog, 1);
++    sd->dialog = webkit_script_dialog_ref(dialog);
++    sd->type = webkit_script_dialog_get_dialog_type(dialog);
++    sd->scale = scale > 0 ? scale : 1;
++
++    char lines[MESSAGE_MAX_LINES][96];
++    int n_lines = 0;
++    const char *msg = webkit_script_dialog_get_message(dialog);
++    cairo_surface_t *measure_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
++    cairo_t *measure = cairo_create(measure_surface);
++    sd->pages = g_ptr_array_new();
++    const char *cursor = msg ? msg : "";
++    do {
++        g_ptr_array_add(sd->pages, (gpointer) cursor);
++        const char *next = wrap_message(measure, cursor, lines, &n_lines);
++        if (!*next || next <= cursor) break;
++        cursor = next;
++    } while (true);
++    if (sd->pages->len > 1)
++        n_lines = MESSAGE_MAX_LINES + 1;
++    cairo_destroy(measure);
++    cairo_surface_destroy(measure_surface);
++
++    sd->num_buttons = (sd->type == WEBKIT_SCRIPT_DIALOG_ALERT) ? 1 : 2;
++    sd->buttons[0].label = "OK";
++    sd->buttons[0].is_cancel = false;
++    if (sd->num_buttons == 2) {
++        sd->buttons[1].label = "Cancel";
++        sd->buttons[1].is_cancel = true;
++    }
++    sd->focused_button = 0;
++
++    int content_h = DIALOG_PADDING * 2 + MESSAGE_LINE_HEIGHT * n_lines + 20 + BUTTON_HEIGHT + DIALOG_PADDING;
++    int row_w = sd->num_buttons * BUTTON_WIDTH + (sd->num_buttons - 1) * BUTTON_SPACING;
++    int y0 = DIALOG_PADDING + MESSAGE_LINE_HEIGHT * n_lines + 20;
++    for (int i = 0; i < sd->num_buttons; i++) {
++        sd->buttons[i].w = BUTTON_WIDTH;
++        sd->buttons[i].h = BUTTON_HEIGHT;
++        sd->buttons[i].x = (DIALOG_WIDTH - row_w) / 2 + i * (BUTTON_WIDTH + BUTTON_SPACING);
++        sd->buttons[i].y = y0;
++    }
++
++    sd->width = DIALOG_WIDTH * sd->scale;
++    sd->height = content_h * sd->scale;
++    sd->stride = sd->width * 4;
++    sd->shm_pool_size = sd->stride * sd->height;
++
++    sd->shm_pool_fd = os_create_anonymous_file(sd->shm_pool_size);
++    g_assert(sd->shm_pool_fd >= 0);
++    sd->shm_pool_data = mmap(NULL, sd->shm_pool_size, PROT_READ | PROT_WRITE, MAP_SHARED, sd->shm_pool_fd, 0);
++    g_assert(sd->shm_pool_data != MAP_FAILED);
++    sd->shm_pool = wl_shm_create_pool(shm, sd->shm_pool_fd, sd->shm_pool_size);
++    sd->buffer = wl_shm_pool_create_buffer(sd->shm_pool, 0, sd->width, sd->height,
++                                           sd->stride, WL_SHM_FORMAT_ARGB8888);
++
++    sd->cr_surface = cairo_image_surface_create_for_data(sd->shm_pool_data, CAIRO_FORMAT_ARGB32,
++                                                         sd->width, sd->height, sd->stride);
++    sd->cr = cairo_create(sd->cr_surface);
++    return sd;
++}
++
++void
++cog_script_dialog_destroy(CogScriptDialog *sd)
++{
++    if (!sd) return;
++    /* If the embedder tears down without an answer, close WITHOUT
++     * confirming: cancel-equivalent, never an implicit OK. */
++    if (!sd->answered) {
++        if (sd->type == WEBKIT_SCRIPT_DIALOG_CONFIRM ||
++            sd->type == WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM)
++            webkit_script_dialog_confirm_set_confirmed(sd->dialog, FALSE);
++        webkit_script_dialog_close(sd->dialog);
++    }
++    g_clear_pointer(&sd->cr, cairo_destroy);
++    g_clear_pointer(&sd->cr_surface, cairo_surface_destroy);
++    g_clear_pointer(&sd->buffer, wl_buffer_destroy);
++    g_clear_pointer(&sd->shm_pool, wl_shm_pool_destroy);
++    munmap(sd->shm_pool_data, sd->shm_pool_size);
++    close(sd->shm_pool_fd);
++    g_ptr_array_unref(sd->pages);
++    webkit_script_dialog_unref(sd->dialog);
++    g_free(sd);
++}
++
++int cog_script_dialog_get_width(CogScriptDialog *sd) { return sd->width; }
++int cog_script_dialog_get_height(CogScriptDialog *sd) { return sd->height; }
++
++struct wl_buffer *
++cog_script_dialog_get_buffer(CogScriptDialog *sd)
++{
++    cog_script_dialog_paint(sd);
++    return sd->buffer;
++}
++
++bool
++cog_script_dialog_handle_pointer_press(CogScriptDialog *sd, int x, int y)
++{
++    int lx = x / sd->scale, ly = y / sd->scale;
++    for (int i = 0; i < sd->num_buttons; i++) {
++        if (lx >= sd->buttons[i].x && lx < sd->buttons[i].x + sd->buttons[i].w &&
++            ly >= sd->buttons[i].y && ly < sd->buttons[i].y + sd->buttons[i].h) {
++            if (i == 0 && sd->page + 1 < sd->pages->len) {
++                sd->page++;
++                return false;
++            }
++            answer(sd, !sd->buttons[i].is_cancel);
++            return true;
++        }
++    }
++    return false; /* press elsewhere does nothing - no outside dismissal */
++}
++
++bool
++cog_script_dialog_handle_key(CogScriptDialog *sd, uint32_t keysym)
++{
++    switch (keysym) {
++    case XKB_KEY_Tab:
++    case XKB_KEY_Right:
++    case XKB_KEY_Left:
++        if (sd->num_buttons > 1)
++            sd->focused_button = (sd->focused_button + 1) % sd->num_buttons;
++        return false;
++    case XKB_KEY_Page_Up:
++        if (sd->page) sd->page--;
++        return false;
++    case XKB_KEY_Page_Down:
++        if (sd->page + 1 < sd->pages->len) sd->page++;
++        return false;
++    case XKB_KEY_Return:
++    case XKB_KEY_KP_Enter:
++        if (!sd->buttons[sd->focused_button].is_cancel && sd->page + 1 < sd->pages->len) {
++            sd->page++;
++            return false;
++        }
++        answer(sd, !sd->buttons[sd->focused_button].is_cancel);
++        return true;
++    case XKB_KEY_Escape:
++        if (sd->num_buttons > 1) {
++            answer(sd, false);
++            return true;
++        }
++        return false; /* ALERT has no cancel */
++    default:
++        return false;
++    }
++}
+diff -ruN -x build -x .git cog-pristine/platform/wayland/cog-script-dialog-wl.h b/platform/wayland/cog-script-dialog-wl.h
+--- a/platform/wayland/cog-script-dialog-wl.h	1970-01-01 10:00:00.000000000 +1000
++++ b/platform/wayland/cog-script-dialog-wl.h	2026-11-06 04:51:16.105877721 +1100
+@@ -0,0 +1,38 @@
++/*
++ * cog-script-dialog-wl.h
++ * Southbag: rendered, actionable script dialogs for the wayland platform.
++ * Modeled on cog-popup-menu-wl (same shm + cairo machinery).
++ * Distributed under terms of the MIT license, as the rest of cog.
++ */
++
++#ifndef COG_SCRIPT_DIALOG_WL_H
++#define COG_SCRIPT_DIALOG_WL_H
++
++#include <wayland-client.h>
++#include <wpe/webkit.h>
++#include <stdbool.h>
++#include <stdint.h>
++
++typedef struct _CogScriptDialog CogScriptDialog;
++
++/* Takes its own ref on dialog. scale is the output buffer scale. */
++CogScriptDialog *cog_script_dialog_create(WebKitScriptDialog *dialog,
++                                          struct wl_shm *shm,
++                                          int scale);
++void cog_script_dialog_destroy(CogScriptDialog *sd);
++
++int cog_script_dialog_get_width(CogScriptDialog *sd);
++int cog_script_dialog_get_height(CogScriptDialog *sd);
++
++/* Paints (idempotent) and returns the buffer to attach. */
++struct wl_buffer *cog_script_dialog_get_buffer(CogScriptDialog *sd);
++
++/* Pointer press at surface-local coordinates. Returns true when the press
++ * activated a button and the dialog answered itself. */
++bool cog_script_dialog_handle_pointer_press(CogScriptDialog *sd, int x, int y);
++
++/* Keysym (xkb) on a pressed key. Returns true when the key answered the
++ * dialog (Return activates, Escape cancels where a cancel exists). */
++bool cog_script_dialog_handle_key(CogScriptDialog *sd, uint32_t keysym);
++
++#endif /* COG_SCRIPT_DIALOG_WL_H */
+diff -ruN -x build -x .git cog-pristine/platform/wayland/meson.build b/platform/wayland/meson.build
+--- a/platform/wayland/meson.build	2026-11-06 04:47:23.151821220 +1100
++++ b/platform/wayland/meson.build	2026-11-06 04:47:33.213405619 +1100
+@@ -123,6 +123,7 @@
+     'cog-im-context-wl.c',
+     'cog-platform-wl.c',
+     'cog-popup-menu-wl.c',
++    'cog-script-dialog-wl.c',
+     'os-compatibility.c',
+     wayland_platform_sources,
+     c_args: wayland_platform_c_args,

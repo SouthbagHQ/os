@@ -1,0 +1,18 @@
+[Unit]
+Description=Southbag input broker stop-only customer transport
+After=southbag-input-broker.service
+Requires=southbag-input-broker.service
+Before=systemd-user-sessions.service
+
+[Socket]
+ListenStream=/run/southbag-input-broker.sock
+SocketMode=0666
+SocketUser=root
+SocketGroup=root
+Accept=yes
+MaxConnections=8
+MaxConnectionsPerSource=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

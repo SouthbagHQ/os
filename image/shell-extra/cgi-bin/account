@@ -1,0 +1,91 @@
+#!/bin/sh
+# Records (or clears) which Southbag account this device belongs to, for the
+# session lock's re-auth check. Written at login, cleared at logout.
+#
+# The note is authority - southbag-unlock lets in whoever it names - so it
+# is never taken from the page's word:
+#
+# * Origin must be exactly the shell's own (http://127.0.0.1:8080). Service
+#   sites open in app windows are other origins; browsers set Origin on
+#   POST and a site cannot spoof it, so web content - the caller class this
+#   boundary is for - cannot rebind the lock to an attacker's account.
+#   (A process already running as the session user can signal swaylock
+#   directly; that class is outside what the lock claims to stop.)
+# * The identity recorded is what IDENTITY says: the bearer token posted
+#   here is exchanged at the OAuth userinfo endpoint (token type, scope and
+#   signature checked server-side by Identity) and the sub/email from that
+#   answer are written, parsed with jq, never the caller's claim.
+#
+# Lives in the customer's home: ephemeral on a live boot (gone with the
+# session), persistent on an installed system so a reboot cannot quietly
+# drop the lock's account binding while the stored login lives on.
+#
+# Concurrency with the device-session manager: every write and clear here
+# takes the same session.lock the manager holds for launch/reset/recovery,
+# and is generation-fenced UNDER that lock. The caller names the era it
+# belongs to (the generation the shell captured at login); a writer from a
+# retired era is rejected, not merely delayed - after waiting out a reset's
+# lock it finds the current generation changed or gone and is refused, so a
+# stale sign-in completing during teardown can neither recreate the account
+# note after reset removed it nor rebind the lock to a dead session.
+#
+# SOUTHBAG_IDENTITY_ORIGIN / SOUTHBAG_STATE_DIR / SOUTHBAG_WGET exist for
+# the mock-contract tests (tests/account.test.mjs); the device never sets
+# them.
+set -eu
+
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+root="$state/device-session"
+origin=${SOUTHBAG_IDENTITY_ORIGIN:-https://identity.southbag.cc}
+wgetbin=${SOUTHBAG_WGET:-busybox wget}
+
+fail() { printf 'Status: %s\r\nContent-Type: text/plain\r\n\r\n%s\r\n' "$1" "$2"; exit 0; }
+
+[ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] || fail 403 "shell only"
+[ "${REQUEST_METHOD:-}" = "POST" ] || fail 405 "post only"
+
+len="${CONTENT_LENGTH:-0}"
+[ "$len" -gt 0 ] && [ "$len" -lt 4096 ] || fail 400 "bad request"
+body=$(dd bs=1 count="$len" 2>/dev/null)
+
+mkdir -p "$state"
+chmod 700 "$state"
+
+posted=$(printf '%s' "$body" | jq -r '.generation // empty' 2>/dev/null)
+
+if ! printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
+ # Token shape first: a malformed token never reaches a header.
+ token=$(printf '%s' "$body" | jq -r '.accessToken // empty' 2>/dev/null)
+ printf '%s' "$token" | grep -qE '^[A-Za-z0-9._~-]{20,}$' || fail 400 "no token"
+
+ # The Identity exchange stays OUTSIDE the lock: network latency must not
+ # hold up a reset. The era is re-checked under the lock at write time.
+ # shellcheck disable=SC2086
+ resp=$($wgetbin -q -T 8 -O - \
+  --header "Authorization: Bearer $token" \
+  "$origin/api/auth/oauth2/userinfo" 2>/dev/null) || fail 502 "identity refused"
+
+ # This caller field is NOT an identity assertion or authorization. It is
+ # only the callback's consistency fence against its verified ID-token sub.
+ # A caller cannot bind an arbitrary subject: authority remains userinfo.
+ expected=$(printf '%s' "$body" | jq -er '.expectedSubject | select(type == "string" and length > 0)' 2>/dev/null) || fail 400 "missing expected subject"
+ sub=$(printf '%s' "$resp" | jq -r '.sub // empty' 2>/dev/null)
+ email=$(printf '%s' "$resp" | jq -r '.email // empty' 2>/dev/null)
+ { [ -n "$sub" ] && [ -n "$email" ]; } || fail 502 "identity answered without an account"
+ [ "$sub" = "$expected" ] || fail 409 "identity subject mismatch"
+fi
+
+# Serialize with the manager, then fence: name a live era or be refused.
+exec 9>"$state/session.lock"
+flock -x 9
+current=$([ -f "$root/generation" ] && cat "$root/generation" || true)
+{ [ -n "$posted" ] && [ -n "$current" ] && [ "$posted" = "$current" ]; } || fail 409 "retired era"
+
+if printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
+ rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+ printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":false}'
+ exit 0
+fi
+
+( umask 077; printf '%s\t%s\n' "$sub" "$email" > "$state/account" )
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":true}'
