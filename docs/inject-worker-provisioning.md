@@ -63,6 +63,31 @@ unknown hashes, requires the corresponding source, clears stale inputs and
 copies source beside the output image. Hook 0013 installs the package after
 customer creation, not in live-build's earlier package phase, then removes
 the staged installer. It does not enable/start the unit or grant devices.
-The separately built CI candidate is deliberately rejected. No network fetch
+Unqualified CI candidates are deliberately rejected. One separately qualified
+exact CI binary now has a versioned ci1 lane, described below. No network fetch
 or self-updater is added. Rebuilt-image inclusion/boot qualification remains
 open until an image using those exact inputs has been checked.
+
+## Separately qualified exact ci1 image lane
+
+CI run 42316164025/artifact 13551346517 built binary SHA256
+7b017fcaefd6f7e7137840be54e094d263c4fcdcca3de672335200190bcce10c from
+exact source28fc7630.... Its source/archive/manifest, ELF and loader checks
+passed. A fresh networkless guest passed identity/device denials, false-condition
+skip, unsafe-group preinstall refusal/recovery and install/removal/reinstall,
+without executing the worker. It is packaged separately as
+2.4.1+southbag.1.minimal.ci1, not substituted for the old sysroot artifact.
+Fixed timestamps and gzip packaging produce the same envelope on Ubuntu and
+Debian package tools: SHA256
+3b63aeaa438de7589ebd2ce6823ad01fcb0762e3d635da6c23986e13879e9e50.
+That exact envelope also passed the guest install and no-process checks.
+
+ISO manual dispatch has an optional dormant_ci1 boolean, default false. It uses
+Actions artifact download for one fixed run/name, checks binary/source hashes,
+builds the separately versioned package, then independently checks its exact
+package hash before image staging. No new comment, public upload, release or
+binary in source history is required. No arbitrary run, artifact or hash input
+is accepted. Artifact expiry/download permission errors fail the build rather
+than selecting a newer candidate. Source accompanies the ISO output. This is a
+diagnostic image path, not activation permission or a deployment. A complete
+rebuilt-image inclusion/boot check remains open until the exact output is tested.
