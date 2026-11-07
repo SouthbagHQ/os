@@ -111,7 +111,7 @@ async function holdLock() {
 
 test("shell origin + valid token records the SERVER-asserted account, mode 600", () => {
   writeGen("g1");
-  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB, generation: "g1" } });
   assert.equal(r.status, 0);
   assert.match(r.out, /\{"recorded":true\}/);
   const note = join(stateDir, "account");
@@ -121,7 +121,7 @@ test("shell origin + valid token records the SERVER-asserted account, mode 600",
 
 test("no Origin header is refused and writes nothing", () => {
   rmSync(join(stateDir, "account"), { force: true });
-  const r = cgi({ body: { accessToken: TOKEN } });
+  const r = cgi({ body: { accessToken: TOKEN, expectedSubject: SUB } });
   assert.equal(httpStatus(r.out), 403);
   assert.ok(!existsSync(join(stateDir, "account")));
 });
@@ -135,7 +135,7 @@ for (const o of [
 ]) {
   test(`unexpected Origin ${JSON.stringify(o)} is refused`, () => {
     rmSync(join(stateDir, "account"), { force: true });
-    const r = cgi({ originHeader: o, body: { accessToken: TOKEN } });
+    const r = cgi({ originHeader: o, body: { accessToken: TOKEN, expectedSubject: SUB } });
     assert.equal(httpStatus(r.out), 403);
     assert.ok(!existsSync(join(stateDir, "account")));
   });
@@ -155,7 +155,7 @@ test("Identity refusal keeps any existing note intact", () => {
   mkdirSync(stateDir, { recursive: true });
   writeGen("g1");
   writeFileSync(join(stateDir, "account"), `${SUB}\t${EMAIL}\n`, { mode: 0o600 });
-  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: "wrong.token_abc-123~456", generation: "g1" } });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: "wrong.token_abc-123~456", expectedSubject: SUB, generation: "g1" } });
   assert.equal(httpStatus(r.out), 502);
   assert.equal(readFileSync(join(stateDir, "account"), "utf8"), `${SUB}\t${EMAIL}\n`);
 });
@@ -179,7 +179,7 @@ test("clear removes the note and pending challenge", () => {
 test("retired-era binding write is rejected and recreates nothing", () => {
   writeGen("g2");
   rmSync(join(stateDir, "account"), { force: true });
-  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB, generation: "g1" } });
   assert.equal(httpStatus(r.out), 409);
   assert.ok(!existsSync(join(stateDir, "account")));
 });
@@ -195,7 +195,7 @@ test("retired-era clear is rejected and the note survives", () => {
 test("missing generation field is rejected", () => {
   writeGen("g1");
   rmSync(join(stateDir, "account"), { force: true });
-  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN } });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB } });
   assert.equal(httpStatus(r.out), 409);
   assert.ok(!existsSync(join(stateDir, "account")));
 });
@@ -215,7 +215,7 @@ test("stale writer waiting out the lock is rejected after the era rotates", asyn
   writeGen("g1");
   rmSync(join(stateDir, "account"), { force: true });
   const { exited } = await holdLock();
-  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB, generation: "g1" } });
   await new Promise((r) => setTimeout(r, 300)); // CGI queued behind the lock
   writeGen("g2"); // era rotates while it waits
   const r = await pending;
@@ -230,7 +230,7 @@ test("stale writer waiting out the lock is rejected after the era vanishes", asy
   writeGen("g1");
   rmSync(join(stateDir, "account"), { force: true });
   const { exited } = await holdLock();
-  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB, generation: "g1" } });
   await new Promise((r) => setTimeout(r, 300));
   dropGen();
   const r = await pending;
@@ -246,10 +246,35 @@ test("current-era writer waiting out the lock is accepted when the era still hol
   writeGen("g1");
   rmSync(join(stateDir, "account"), { force: true });
   const { exited } = await holdLock();
-  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  const pending = cgiAsync({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: SUB, generation: "g1" } });
   const r = await pending;
   await exited;
   assert.equal(r.status, 0);
   assert.match(r.out, /\{"recorded":true\}/);
+  assert.equal(readFileSync(join(stateDir, "account"), "utf8"), `${SUB}\t${EMAIL}\n`);
+});
+
+// The expected field is a fence, never an alternative source of authority.
+for (const expectedSubject of ["attacker-selected-subject", "", 123, null]) {
+  test(`userinfo cannot be replaced by caller subject ${JSON.stringify(expectedSubject)}`, () => {
+    writeGen("g1");
+    rmSync(join(stateDir, "account"), { force: true });
+    const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject, generation: "g1" } });
+    assert.equal(httpStatus(r.out), expectedSubject === "attacker-selected-subject" ? 409 : 400);
+    assert.ok(!existsSync(join(stateDir, "account")));
+  });
+}
+test("missing subject fence cannot create a binding", () => {
+  writeGen("g1");
+  rmSync(join(stateDir, "account"), { force: true });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, generation: "g1" } });
+  assert.equal(httpStatus(r.out), 400);
+  assert.ok(!existsSync(join(stateDir, "account")));
+});
+test("mismatched subject fence preserves an existing valid binding", () => {
+  writeGen("g1");
+  writeFileSync(join(stateDir, "account"), `${SUB}\t${EMAIL}\n`, { mode: 0o600 });
+  const r = cgi({ originHeader: SHELL_ORIGIN, body: { accessToken: TOKEN, expectedSubject: "other", generation: "g1" } });
+  assert.equal(httpStatus(r.out), 409);
   assert.equal(readFileSync(join(stateDir, "account"), "utf8"), `${SUB}\t${EMAIL}\n`);
 });
