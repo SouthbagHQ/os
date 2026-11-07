@@ -184,8 +184,9 @@ async function verifyIdToken(
   iss: string,
   clientId: string,
 ): Promise<IdTokenClaims> {
-  const [head, payload, signature] = idToken.split(".");
-  if (!head || !payload || !signature) throw new Error("Identity returned a malformed id token.");
+  const parts = idToken.split(".");
+  const [head, payload, signature] = parts;
+  if (parts.length !== 3 || !head || !payload || !signature) throw new Error("Identity returned a malformed id token.");
   const header = decodeJsonSegment(head) as { alg?: string; kid?: string };
   if (header.alg !== "EdDSA") {
     throw new Error(`Unexpected id token algorithm: ${header.alg ?? "none"}.`);
@@ -209,15 +210,19 @@ async function verifyIdToken(
   const claims = decodeJsonSegment(payload) as IdTokenClaims;
   if (claims.iss !== iss) throw new Error("The id token names the wrong issuer.");
   const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-  if (!audience.includes(clientId)) throw new Error("The id token was not minted for this device.");
-  if (typeof claims.exp !== "number" || claims.exp * 1000 <= Date.now()) {
+  if (!audience.length || !audience.every((item) => typeof item === "string" && item.length > 0)
+      || !audience.includes(clientId)) throw new Error("The id token was not minted for this device.");
+  if ((audience.length > 1 || claims.azp !== undefined) && claims.azp !== clientId) {
+    throw new Error("The id token names the wrong authorized party.");
+  }
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()) {
     throw new Error("The id token is already expired.");
   }
   return claims;
 }
 
 export function claimsToCustomer(claims: IdTokenClaims): Customer {
-  if (!claims.sub) throw new Error("The id token has no subject.");
+  if (typeof claims.sub !== "string" || !claims.sub.trim()) throw new Error("The id token has no subject.");
   const email = typeof claims.email === "string" ? claims.email : "";
   const name =
     (typeof claims.name === "string" && claims.name.trim()) ||
@@ -250,10 +255,24 @@ export async function completeLogin(): Promise<Session | null> {
   if (!rawPending) {
     throw new Error("Sign-in finished, but this device has no sign-in in progress. Try again.");
   }
-  const pending = JSON.parse(rawPending) as Pending;
+  // Consume even malformed transactions once. Never exchange with a partial,
+  // future-dated, wrong-origin or invalid-PKCE transaction from storage.
   sessionStorage.removeItem(PENDING_KEY);
+  const pending = JSON.parse(rawPending) as Pending;
+  const now = Date.now();
+  if (!pending || typeof pending !== "object"
+      || typeof pending.createdAt !== "number" || !Number.isFinite(pending.createdAt)
+      || pending.createdAt > now
+      || typeof pending.verifier !== "string" || !/^[A-Za-z0-9._~-]{43,128}$/.test(pending.verifier)
+      || typeof pending.state !== "string" || !pending.state
+      || typeof pending.nonce !== "string" || !pending.nonce
+      || typeof pending.clientId !== "string" || !pending.clientId
+      || typeof pending.iss !== "string" || !pending.iss
+      || pending.redirect !== redirectUri()) {
+    throw new Error("Invalid sign-in transaction. Try again.");
+  }
 
-  if (Date.now() - pending.createdAt > PENDING_TTL_MS) {
+  if (now - pending.createdAt > PENDING_TTL_MS) {
     throw new Error("Sign-in took too long. Try again.");
   }
   if (params.get("state") !== pending.state) {
