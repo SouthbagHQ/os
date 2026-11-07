@@ -17,7 +17,7 @@ fi
 # Optional exact offline dormant worker artifact. Default images carry no
 # worker binary. The helper clears stale staging when the input is absent.
 if [[ -n "${SOUTHBAG_INJECT_DEB:-}" || -n "${SOUTHBAG_INJECT_SOURCE:-}" ]]; then
-  bash "$repo/packaging/stage-inject-image.sh" "${SOUTHBAG_INJECT_DEB:?}" "${SOUTHBAG_INJECT_SOURCE:?}"
+  bash "$repo/packaging/stage-inject-image.sh" "${SOUTHBAG_INJECT_DEB:?}" "${SOUTHBAG_INJECT_SOURCE:?}" "${SOUTHBAG_INJECT_LANE:-guest-tested}"
 else
   bash "$repo/packaging/stage-inject-image.sh"
 fi
