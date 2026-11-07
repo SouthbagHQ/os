@@ -1,0 +1,61 @@
+name: dormant inject-only source candidate
+
+# Build evidence only. No install, worker invocation, device grants, secrets,
+# signing, release, update-channel publish or image activation.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packaging/*inject*'
+      - 'tests/worker-provisioning.test.py'
+      - 'image/config/includes.chroot/etc/southbag/**'
+      - 'image/config/includes.chroot/etc/systemd/system/southbag-espanso.service'
+      - 'image/config/hooks/normal/0012-inject-user.hook.chroot'
+      - '.github/workflows/inject-candidate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source-candidate:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install target-native build dependencies
+        shell: sh
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends bash git ca-certificates python3 curl build-essential pkg-config binutils libxkbcommon-dev libbz2-dev libssl-dev
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+      - name: Reconstruct pinned corresponding source
+        run: |
+          mkdir -p out/inject-candidate
+          python3 packaging/reconstruct-inject-source.py out/inject-candidate/source.tar.gz
+          python3 tests/worker-provisioning.test.py
+      - name: Compile and run non-reader tests only
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: |
+          set -euo pipefail
+          rustc --version >out/inject-candidate/toolchain.txt
+          cargo --version >>out/inject-candidate/toolchain.txt
+          gcc --version >>out/inject-candidate/toolchain.txt
+          bash packaging/build-inject-source.sh out/inject-candidate/source.tar.gz out/inject-candidate
+          sha256sum out/inject-candidate/source.tar.gz out/inject-candidate/espanso-candidate >out/inject-candidate/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dormant-inject-source-candidate
+          path: |
+            out/inject-candidate/source.tar.gz
+            out/inject-candidate/espanso-candidate
+            out/inject-candidate/espanso.needed.txt
+            out/inject-candidate/toolchain.txt
+            out/inject-candidate/SHA256SUMS
+          retention-days: 7
