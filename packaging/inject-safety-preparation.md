@@ -8,7 +8,7 @@ Baseline corresponding source SHA256:
 28fc76302b6cb7f752d6a5f33fda33f04d81a3c7e880305b7d3dff4a493c22be
 
 Patch SHA256:
-516980ce5e73671b4327fecbf14fa39d2bd9d673161e25f5b47e25cc8c53e9b3
+ee2cde05b64d4f80bc9c490b0366e96e83cf32807d81f02d4e0d2db809fc4b44
 
 ## Candidate changes
 
@@ -17,7 +17,7 @@ Patch SHA256:
   necessary: retaining a disconnected receiver would panic the engine.
 - Inject-only Linux UI compiles out notification transport independently of
   configuration, instead of relying only on show_notifications:false.
-- Detector read error, EOF, EPOLLERR or EPOLLHUP invalidates the inject-only
+- Detector read error, EOF, partial record, SYN_DROPPED, EPOLLERR or EPOLLHUP invalidates the inject-only
   detector rather than continuing with a partial/uncertain input set. This
   does not by itself establish whole-process or input-FD cleanup.
 - A test-only one-way topology policy records opaque snapshot tokens and
@@ -33,7 +33,7 @@ Patch SHA256:
 Native Debian13, networkless build environment, no worker entrypoint invoked:
 
 - Inject-only CLI14/14.
-- Inject-only detector15/15; non-inject detector10/10.
+- Inject-only detector17/17; non-inject detector12/12.
 - Inject-only UI3/3; non-inject UI2/2.
 - Non-inject CLI13/13 with wayland, disabled clipboard and no modulo. This
   checks conditional paths, not a complete stock desktop build.
@@ -65,3 +65,15 @@ representative hardware environment. The topology primitive is not that watcher.
 A returned detector error alone is not a full-unit stop proof. Authentication,
 consent and activation remain held. No qualification or permission follows from
 these compile/unit-test results.
+
+
+## Host fixture cleanup
+
+Run the Node contracts with `python3 scripts/test-child-cleanup.py node --test
+tests/*.test.mjs` on Linux. The runner reports and kills only descendants
+adopted from that invocation, uses PID-bound handles with parentage rechecks,
+and reaps to zero. Failure codes remain failures; unverified cleanup fails.
+The full host suite passed91/91 with six abandoned inert fixture sleepers
+cleaned and zero remaining children. Runner fixtures3/3 verify detached-child
+cleanup, no-descendant cleanup and failure-code preservation. This changes
+only test execution hygiene, not product stop/cleanup semantics.
