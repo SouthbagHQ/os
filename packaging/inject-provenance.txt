@@ -1,0 +1,17 @@
+Dormant inject-only candidate
+Upstream base a87d1723f47a59e38d370e2f0c636d66d568b8f6
+Patched source revision 63ba280a (version 2.4.1-southbag.1)
+Binary SHA256 96da5411cc1b20a3b46fe7de277aa3b047d182694b006720f358a341db11aeef
+Source archive SHA256 28fc76302b6cb7f752d6a5f33fda33f04d81a3c7e880305b7d3dff4a493c22be
+Build target x86_64-unknown-linux-gnu, Debian trixie runtime libraries
+Features: vendored-tls,southbag-inject-only; no default features
+Modulo (forms/search) excluded from this fixed-match worker build.
+Cargo.lock pinned. Corresponding source accompanies the .deb as the separately hashed
+southbag-inject_2.4.1+southbag.1.minimal_source.tar.gz; GPL license is
+also installed with the runtime package.
+Source omits local diagnostic records and host-specific .cargo build config.
+Known limitation: device enumeration only at init; no trusted hotplug guard.
+Per-device DAC grants, virtual-device exclusion, held-modifier handling,
+verified authorization and graphical qualification remain incomplete.
+ExecCondition=/bin/false denies all starts, including manual systemctl start.
+No default rules, input access grants, uinput ownership or auto enablement.
