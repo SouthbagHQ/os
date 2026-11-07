@@ -65,9 +65,14 @@ if ! printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
   --header "Authorization: Bearer $token" \
   "$origin/api/auth/oauth2/userinfo" 2>/dev/null) || fail 502 "identity refused"
 
+ # This caller field is NOT an identity assertion or authorization. It is
+ # only the callback's consistency fence against its verified ID-token sub.
+ # A caller cannot bind an arbitrary subject: authority remains userinfo.
+ expected=$(printf '%s' "$body" | jq -er '.expectedSubject | select(type == "string" and length > 0)' 2>/dev/null) || fail 400 "missing expected subject"
  sub=$(printf '%s' "$resp" | jq -r '.sub // empty' 2>/dev/null)
  email=$(printf '%s' "$resp" | jq -r '.email // empty' 2>/dev/null)
  { [ -n "$sub" ] && [ -n "$email" ]; } || fail 502 "identity answered without an account"
+ [ "$sub" = "$expected" ] || fail 409 "identity subject mismatch"
 fi
 
 # Serialize with the manager, then fence: name a live era or be refused.
