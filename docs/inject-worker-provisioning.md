@@ -53,3 +53,16 @@ and graphical/focus qualification. Authentication and consent remain held.
 The false condition must stay until those independent gates pass and the
 activation authority is separately established. Nothing here adds a broker
 start verb or changes its root-only state/stop-only authority.
+
+## Optional offline image input
+
+Image builds default to no worker binary. For a diagnostic image containing
+only the exact guest-tested package, set SOUTHBAG_INJECT_DEB and
+SOUTHBAG_INJECT_SOURCE to local artifact paths. The staging helper refuses
+unknown hashes, requires the corresponding source, clears stale inputs and
+copies source beside the output image. Hook 0013 installs the package after
+customer creation, not in live-build's earlier package phase, then removes
+the staged installer. It does not enable/start the unit or grant devices.
+The separately built CI candidate is deliberately rejected. No network fetch
+or self-updater is added. Rebuilt-image inclusion/boot qualification remains
+open until an image using those exact inputs has been checked.
