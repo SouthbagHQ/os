@@ -49,6 +49,14 @@ jobs:
           gcc --version >>out/inject-candidate/toolchain.txt
           bash packaging/build-inject-source.sh out/inject-candidate/source.tar.gz out/inject-candidate
           sha256sum out/inject-candidate/source.tar.gz out/inject-candidate/espanso-candidate >out/inject-candidate/SHA256SUMS
+      - name: Test separate source-only safety preparation
+        env:
+          CARGO_BUILD_JOBS: 2
+          CARGO_TARGET_DIR: /tmp/inject-preparation-tests
+        run: |
+          # Separate tests only. The old candidate source/binary artifacts
+          # above remain unchanged and do not contain this review patch.
+          bash packaging/test-inject-safety-preparation.sh out/inject-candidate/source.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: dormant-inject-source-candidate
