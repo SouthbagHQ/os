@@ -140,5 +140,6 @@ jobs:
           name: southbag-os-iso
           path: |
             out/southbag-os.iso
+            out/southbag-inject_2.4.1+southbag.1.minimal_source.tar.gz
             serial.log
           if-no-files-found: error
