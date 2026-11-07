@@ -29,6 +29,8 @@ class DarkProvisioning(unittest.TestCase):
    p=pathlib.Path(d);(p/'bad').write_text('not a worker')
    r=subprocess.run(['bash',str(ROOT/'packaging/build-inject-deb.sh'),str(p/'bad'),str(p/'bad'),str(p/'out')],capture_output=True)
    self.assertNotEqual(r.returncode,0);self.assertFalse((p/'out').exists())
+   r=subprocess.run(['bash',str(ROOT/'packaging/build-inject-deb.sh'),str(p/'bad'),str(p/'bad'),str(p/'out'),'ci-candidate'],capture_output=True)
+   self.assertNotEqual(r.returncode,0);self.assertFalse((p/'out').exists())
  def test_source_and_binary_gates_stay_independent(self):
   package=(ROOT/'packaging/build-inject-deb.sh').read_text()
   native=(ROOT/'packaging/build-inject-source.sh').read_text()
@@ -107,4 +109,16 @@ elif name=='adduser':
   code='\n'.join(x for x in hook.splitlines() if not x.startswith('#'))
   for bad in ['systemctl','modprobe','chmod','chgrp','setfacl']:
    self.assertNotIn(bad,code)
+ def test_exact_ci1_lane_is_separate_and_not_auto_enabled(self):
+  package=(ROOT/'packaging/build-inject-deb.sh').read_text()
+  stage=(ROOT/'packaging/stage-inject-image.sh').read_text()
+  hook=(ROOT/'image/config/hooks/normal/0013-inject-package.hook.chroot').read_text()
+  ci_binary='7b017fcaefd6f7e7137840be54e094d263c4fcdcca3de672335200190bcce10c'
+  ci_package='3b63aeaa438de7589ebd2ce6823ad01fcb0762e3d635da6c23986e13879e9e50'
+  self.assertIn(ci_binary,package);self.assertIn('minimal.ci1',package)
+  for text in [stage,hook]:self.assertIn(ci_package,text)
+  workflow=(ROOT/'.github/workflows/iso.yml').read_text()
+  for text in ['dormant_ci1:','default: false','run-id: 42316164025','repository: SouthbagHQ/os','actions: read']:
+   self.assertIn(text,workflow)
+  self.assertNotIn('inputs.run',workflow)
 if __name__=='__main__':unittest.main(verbosity=2)
