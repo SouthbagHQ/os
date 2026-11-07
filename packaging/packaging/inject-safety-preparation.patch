@@ -1,0 +1,459 @@
+diff --git a/espanso-detect/src/evdev/device.rs b/espanso-detect/src/evdev/device.rs
+index 7797164..432e7a1 100644
+--- a/espanso-detect/src/evdev/device.rs
++++ b/espanso-detect/src/evdev/device.rs
+@@ -111,6 +111,7 @@ impl Device {
+                     std::mem::size_of_val(&evs),
+                 )
+             };
++            require_live_read_length(len)?;
+             if len <= 0 {
+                 break;
+             }
+@@ -280,6 +281,26 @@ impl Drop for Device {
+     }
+ }
+ 
++// EOF must not leave a dedicated worker silently using a partial input set.
++fn require_live_read_length(length: ssize_t) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only") && length == 0 {
++        return Err(DeviceError::FailedReadNoSuchDevice.into());
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod live_read_tests {
++    use super::*;
++    #[test]
++    fn eof_invalidates_but_normal_and_errno_handling_stays_separate() {
++        assert_eq!(require_live_read_length(0).is_err(),
++            cfg!(feature = "southbag-inject-only"));
++        assert!(require_live_read_length(-1).is_ok());
++        assert!(require_live_read_length(24).is_ok());
++    }
++}
++
+ pub fn get_devices(keymap: &Keymap) -> Result<Vec<Device>> {
+     let mut keyboards = Vec::new();
+     let dirs = std::fs::read_dir("/dev/input/")?;
+diff --git a/espanso-detect/src/evdev/mod.rs b/espanso-detect/src/evdev/mod.rs
+index 587141b..5314ac9 100644
+--- a/espanso-detect/src/evdev/mod.rs
++++ b/espanso-detect/src/evdev/mod.rs
+@@ -27,6 +27,9 @@ mod hotkey;
+ mod keymap;
+ mod state;
+ mod sync;
++// Inert candidate policy only. No operational watcher/device grants.
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod topology_guard;
+ 
+ use std::cell::RefCell;
+ use std::collections::HashMap;
+@@ -217,6 +220,24 @@ fn evdev_modifiers_state(devices: &[Device]) -> Result<Option<sync::ModifiersSta
+     Ok(Some(state))
+ }
+ 
++// A dedicated worker must not continue with a partial or uncertain input
++// set. No device is reopened or granted access by this error policy.
++fn require_live_poll_source(flags: u32) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only")
++        && flags & ((libc::EPOLLERR | libc::EPOLLHUP) as u32) != 0 {
++        return Err(EVDEVSourceError::DeviceInvalidated().into());
++    }
++    Ok(())
++}
++
++fn require_stable_input_after_read_error(error: &anyhow::Error) -> Result<()> {
++    if cfg!(feature = "southbag-inject-only") {
++        error!("input set invalidated by read error; stopping detector: {error}");
++        return Err(EVDEVSourceError::DeviceInvalidated().into());
++    }
++    Ok(())
++}
++
+ impl EVDEVSource {
+     pub fn new(options: SourceCreationOptions) -> EVDEVSource {
+         let mut modifiers_map = HashMap::new();
+@@ -341,6 +362,7 @@ impl Source for EVDEVSource {
+             }
+ 
+             for ev in evs.iter().take(ret as usize) {
++                require_live_poll_source(ev.events)?;
+                 let device = &self.devices[ev.u64 as usize];
+                 match device.read() {
+                     Ok(events) if !events.is_empty() => {
+@@ -366,6 +388,7 @@ impl Source for EVDEVSource {
+                     }
+                     Ok(_) => { /* SKIP EMPTY */ }
+                     Err(err) => {
++                        require_stable_input_after_read_error(&err)?;
+                         if let Some(DeviceError::FailedReadNoSuchDevice) =
+                             err.downcast_ref::<DeviceError>()
+                         {
+@@ -410,6 +433,9 @@ pub enum EVDEVSourceError {
+ 
+     #[error("internal error")]
+     Internal(),
++
++    #[error("input device set invalidated")]
++    DeviceInvalidated(),
+ }
+ 
+ impl From<RawInputEvent> for Option<InputEvent> {
+@@ -596,3 +622,36 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod stable_input_policy_tests {
++    use super::*;
++
++    #[test]
++    fn poll_error_or_hangup_invalidates_even_with_readiness() {
++        assert!(require_live_poll_source(libc::EPOLLIN as u32).is_ok());
++        for flags in [libc::EPOLLERR, libc::EPOLLHUP,
++            libc::EPOLLIN | libc::EPOLLERR, libc::EPOLLIN | libc::EPOLLHUP] {
++            assert_eq!(require_live_poll_source(flags as u32).is_err(),
++                cfg!(feature = "southbag-inject-only"));
++        }
++    }
++
++    #[test]
++    fn read_failures_invalidate_inject_only_detector() {
++        // Inert errors only: never open a device or initialize a detector.
++        let errors: Vec<anyhow::Error> = vec![
++            DeviceError::FailedReadNoSuchDevice.into(),
++            DeviceError::FailedRead(libc::EIO).into(),
++            anyhow::anyhow!("unclassified input-read failure"),
++        ];
++        for error in errors {
++            let result = require_stable_input_after_read_error(&error);
++            if cfg!(feature = "southbag-inject-only") {
++                assert_eq!(result.unwrap_err().to_string(), "input device set invalidated");
++            } else {
++                assert!(result.is_ok(), "stock error handling remains unchanged");
++            }
++        }
++    }
++}
+diff --git a/espanso-detect/src/evdev/topology_guard.rs b/espanso-detect/src/evdev/topology_guard.rs
+new file mode 100644
+index 0000000..9b6c7a4
+--- /dev/null
++++ b/espanso-detect/src/evdev/topology_guard.rs
+@@ -0,0 +1,134 @@
++// Source-only policy primitive. It neither discovers/trusts devices nor opens,
++// grants, starts or resumes anything. A caller must treat Unchanged as absence
++// of a newly observed change, NEVER as authorization. No operational wiring.
++use std::collections::BTreeSet;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Invalidation {
++    InvalidSnapshot,
++    GenerationChanged,
++    DeviceSetChanged,
++    DeviceEvent,
++    MonitorGap,
++    MonitorLost,
++    ReadFailure,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Observation {
++    // Even apparently benign add/remove/change signals invalidate. Do not
++    // silently extend a previous generation to a replacement device.
++    DeviceEvent,
++    MonitorGap,
++    MonitorLost,
++    ReadFailure,
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Decision {
++    Unchanged,
++    Inhibit(Invalidation),
++}
++
++pub struct TopologyGuard {
++    generation: u64,
++    // Opaque tokens are supplied by a future privileged identity resolver.
++    // Token equality alone establishes no physical provenance or owner trust.
++    snapshot: BTreeSet<String>,
++    invalidated: Option<Invalidation>,
++}
++
++impl TopologyGuard {
++    pub fn observe_initial(generation: u64, tokens: &[String]) -> Self {
++        let snapshot: BTreeSet<String> = tokens.iter().cloned().collect();
++        let invalid = generation == 0 || tokens.is_empty()
++            || tokens.iter().any(|s| s.trim().is_empty())
++            || snapshot.len() != tokens.len();
++        Self { generation, snapshot,
++            invalidated: invalid.then_some(Invalidation::InvalidSnapshot) }
++    }
++
++    fn invalidate(&mut self, reason: Invalidation) -> Decision {
++        let first = *self.invalidated.get_or_insert(reason);
++        Decision::Inhibit(first)
++    }
++
++    pub fn reconcile(&mut self, generation: u64, tokens: &[String]) -> Decision {
++        if let Some(reason) = self.invalidated { return Decision::Inhibit(reason); }
++        if generation != self.generation {
++            return self.invalidate(Invalidation::GenerationChanged);
++        }
++        let observed: BTreeSet<String> = tokens.iter().cloned().collect();
++        if observed.len() != tokens.len() || observed != self.snapshot {
++            return self.invalidate(Invalidation::DeviceSetChanged);
++        }
++        Decision::Unchanged
++    }
++
++    pub fn observe(&mut self, event: Observation) -> Decision {
++        self.invalidate(match event {
++            Observation::DeviceEvent => Invalidation::DeviceEvent,
++            Observation::MonitorGap => Invalidation::MonitorGap,
++            Observation::MonitorLost => Invalidation::MonitorLost,
++            Observation::ReadFailure => Invalidation::ReadFailure,
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn tokens(values: &[&str]) -> Vec<String> {
++        values.iter().map(|s| s.to_string()).collect()
++    }
++
++    #[test]
++    fn invalid_snapshots_never_pass() {
++        for (generation, values) in [(0, vec!["a"]), (1, vec![]),
++            (1, vec![""]), (1, vec![" "]), (1, vec!["a", "a"])] {
++            let values = tokens(&values);
++            let mut guard = TopologyGuard::observe_initial(generation, &values);
++            assert_eq!(guard.reconcile(1, &tokens(&["a"])),
++                Decision::Inhibit(Invalidation::InvalidSnapshot));
++        }
++    }
++
++    #[test]
++    fn order_only_is_unchanged_not_authorized() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a", "b"]));
++        assert_eq!(guard.reconcile(7, &tokens(&["b", "a"])), Decision::Unchanged);
++    }
++
++    #[test]
++    fn addition_removal_replacement_duplicate_all_invalidate() {
++        for values in [vec!["a"], vec!["a", "b", "c"], vec!["a", "c"],
++            vec!["a", "b", "b"], vec![]] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a", "b"]));
++            assert_eq!(guard.reconcile(7, &tokens(&values)),
++                Decision::Inhibit(Invalidation::DeviceSetChanged));
++            assert_eq!(guard.reconcile(7, &tokens(&["a", "b"])),
++                Decision::Inhibit(Invalidation::DeviceSetChanged));
++        }
++    }
++
++    #[test]
++    fn new_generation_does_not_rearm_old_guard() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        for generation in [8, 7, 0] {
++            assert_eq!(guard.reconcile(generation, &tokens(&["a"])),
++                Decision::Inhibit(Invalidation::GenerationChanged));
++        }
++    }
++
++    #[test]
++    fn every_monitor_or_read_failure_invalidates_permanently() {
++        for event in [Observation::DeviceEvent, Observation::MonitorGap,
++            Observation::MonitorLost, Observation::ReadFailure] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++            let result = guard.observe(event);
++            assert!(matches!(result, Decision::Inhibit(_)));
++            assert_eq!(guard.reconcile(7, &tokens(&["a"])), result);
++            assert_eq!(guard.observe(Observation::DeviceEvent), result);
++        }
++    }
++}
+diff --git a/espanso-ui/Cargo.toml b/espanso-ui/Cargo.toml
+index 012b47e..2e4b153 100644
+--- a/espanso-ui/Cargo.toml
++++ b/espanso-ui/Cargo.toml
+@@ -6,6 +6,9 @@ edition = "2021"
+ build = "build.rs"
+ 
+ [features]
++# Dedicated worker must never initialize desktop notification transport.
++southbag-inject-only = []
++
+ # If enabled, avoid linking with the gdiplus library on Windows, which
+ # might conflict with wxWidgets
+ avoid-gdi = []
+diff --git a/espanso-ui/src/linux/mod.rs b/espanso-ui/src/linux/mod.rs
+index 0184bf7..bd24a92 100644
+--- a/espanso-ui/src/linux/mod.rs
++++ b/espanso-ui/src/linux/mod.rs
+@@ -25,6 +25,7 @@ use crossbeam::{
+     select,
+ };
+ use log::error;
++#[cfg(not(feature = "southbag-inject-only"))]
+ use notify_rust::Notification;
+ 
+ use crate::{event::UIEvent, UIEventLoop, UIRemote};
+@@ -63,6 +64,12 @@ impl UIRemote for LinuxRemote {
+         // NOOP on linux
+     }
+ 
++    #[cfg(feature = "southbag-inject-only")]
++    fn show_notification(&self, _: &str) {
++        // No notification transport, even if a caller/config asks for one.
++    }
++
++    #[cfg(not(feature = "southbag-inject-only"))]
+     fn show_notification(&self, message: &str) {
+         if let Err(error) = Notification::new()
+             .summary("Espanso")
+@@ -124,3 +131,34 @@ impl UIEventLoop for LinuxEventLoop {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod inert_lifecycle_tests {
++    use super::*;
++
++    #[cfg(feature = "southbag-inject-only")]
++    #[test]
++    fn notification_request_has_no_transport_or_lifecycle_effect() {
++        let (remote, eventloop) = create(LinuxUIOptions {
++            notification_icon_path: String::new(),
++        });
++        remote.show_notification("inert notification fixture");
++        remote.exit();
++        assert!(eventloop.run(Box::new(|_| panic!("exit already queued"))).is_ok());
++    }
++
++    #[test]
++    fn engine_unwind_drops_remote_and_unblocks_ui_as_error() {
++        // Channel-only lifecycle fixture. No display, notification, worker,
++        // device, credential or transport initialization.
++        let (remote, eventloop) = create(LinuxUIOptions {
++            notification_icon_path: String::new(),
++        });
++        let child = std::thread::spawn(move || {
++            let _owned_remote = remote;
++            panic!("inert engine-unwind fixture");
++        });
++        assert!(child.join().is_err());
++        assert!(eventloop.run(Box::new(|_| panic!("channel must already be closed"))).is_err());
++    }
++}
+diff --git a/espanso/Cargo.toml b/espanso/Cargo.toml
+index 48991c8..a518052 100644
+--- a/espanso/Cargo.toml
++++ b/espanso/Cargo.toml
+@@ -11,7 +11,7 @@ edition = "2021"
+ 
+ [features]
+ # Southbag fixed-match build: never initialize a clipboard/compositor client.
+-southbag-inject-only = ["wayland", "espanso-clipboard/disabled", "espanso-detect/southbag-inject-only"]
++southbag-inject-only = ["wayland", "espanso-clipboard/disabled", "espanso-detect/southbag-inject-only", "espanso-ui/southbag-inject-only"]
+ 
+ default = ["modulo", "native-tls"]
+ 
+diff --git a/espanso/src/cli/worker/engine/mod.rs b/espanso/src/cli/worker/engine/mod.rs
+index 608bc6e..25ff02d 100644
+--- a/espanso/src/cli/worker/engine/mod.rs
++++ b/espanso/src/cli/worker/engine/mod.rs
+@@ -149,15 +149,20 @@ pub fn initialize_and_spawn(
+                 })
+                 .expect("failed to initialize detector module");
+             let exit_source = super::engine::funnel::exit::ExitSource::new(exit_signal, &sequencer);
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let ipc_event_source =
+                 super::engine::funnel::ipc::IpcEventSource::new(ipc_event_receiver, &sequencer);
++            #[cfg(feature = "southbag-inject-only")]
++            drop(ipc_event_receiver);
+             let ui_source = super::engine::funnel::ui::UISource::new(ui_event_receiver, &sequencer);
+             let secure_input_source = super::engine::funnel::secure_input::SecureInputSource::new(
+                 secure_input_receiver,
+                 &sequencer,
+             );
+             let mut sources: Vec<&dyn espanso_engine::funnel::Source> =
+-                vec![&detect_source, &exit_source, &ui_source, &ipc_event_source];
++                vec![&detect_source, &exit_source, &ui_source];
++            #[cfg(not(feature = "southbag-inject-only"))]
++            sources.push(&ipc_event_source);
+             if cfg!(target_os = "macos") {
+                 sources.push(&secure_input_source);
+             }
+diff --git a/espanso/src/cli/worker/mod.rs b/espanso/src/cli/worker/mod.rs
+index 12d2756..3b392a8 100644
+--- a/espanso/src/cli/worker/mod.rs
++++ b/espanso/src/cli/worker/mod.rs
+@@ -39,6 +39,7 @@ mod config;
+ mod context;
+ mod daemon_monitor;
+ mod engine;
++#[cfg(not(feature = "southbag-inject-only"))]
+ mod ipc;
+ mod match_cache;
+ mod secure_input;
+@@ -143,8 +144,13 @@ fn worker_main(args: CliModuleArgs) -> i32 {
+     .expect("unable to initialize engine");
+ 
+     // Setup the IPC server
++    #[cfg(not(feature = "southbag-inject-only"))]
+     ipc::initialize_and_spawn(&paths.runtime, engine_exit_notify.clone(), ipc_event_notify)
+         .expect("unable to initialize IPC server");
++    // Dedicated worker lifecycle belongs to the stop-only system broker. No
++    // local socket may trigger expansion, enable/toggle, or worker shutdown.
++    #[cfg(feature = "southbag-inject-only")]
++    drop(ipc_event_notify);
+ 
+     // If specified, automatically monitor the daemon status and
+     // terminate the worker if the daemon terminates
+diff --git a/espanso/src/ipc.rs b/espanso/src/ipc.rs
+index 41df589..2a6d951 100644
+--- a/espanso/src/ipc.rs
++++ b/espanso/src/ipc.rs
+@@ -60,10 +60,34 @@ pub fn create_ipc_client_to_daemon(runtime_dir: &Path) -> Result<impl IPCClient<
+ }
+ 
+ fn create_ipc_server(runtime_dir: &Path, name: &str) -> Result<impl IPCServer<IPCEvent>> {
++    // Guard before any transport initialization or runtime path access.
++    if cfg!(feature = "southbag-inject-only") {
++        anyhow::bail!("IPC unavailable in Southbag inject-only build");
++    }
+     espanso_ipc::server(&format!("espanso{name}"), runtime_dir)
+ }
+ 
+ fn create_ipc_client(runtime_dir: &Path, target_process: &str) -> Result<impl IPCClient<IPCEvent>> {
++    // Guard before any transport initialization or runtime path access.
++    if cfg!(feature = "southbag-inject-only") {
++        anyhow::bail!("IPC unavailable in Southbag inject-only build");
++    }
+     let client = espanso_ipc::client(&format!("espanso{target_process}"), runtime_dir)?;
+     Ok(client)
+ }
++
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod southbag_no_ipc_tests {
++    use super::*;
++
++    #[test]
++    fn all_ipc_constructors_reject_before_transport() {
++        // No path creation is needed: rejection must precede even an invalid
++        // runtime directory. These calls never initialize or run a worker.
++        let path = Path::new("/proc/invalid-southbag-ipc-runtime");
++        assert_eq!(create_daemon_ipc_server(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_worker_ipc_server(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_ipc_client_to_worker(path).err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++        assert_eq!(create_ipc_client(path, "daemonv2").err().expect("must refuse IPC").to_string(), "IPC unavailable in Southbag inject-only build");
++    }
++}
