@@ -189,10 +189,10 @@ index 587141b..5314ac9 100644
 +}
 diff --git a/espanso-detect/src/evdev/topology_guard.rs b/espanso-detect/src/evdev/topology_guard.rs
 new file mode 100644
-index 0000000..9b6c7a4
+index 0000000..2d50ee1
 --- /dev/null
 +++ b/espanso-detect/src/evdev/topology_guard.rs
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,189 @@
 +// Source-only policy primitive. It neither discovers/trusts devices nor opens,
 +// grants, starts or resumes anything. A caller must treat Unchanged as absence
 +// of a newly observed change, NEVER as authorization. No operational wiring.
@@ -207,6 +207,7 @@ index 0000000..9b6c7a4
 +    MonitorGap,
 +    MonitorLost,
 +    ReadFailure,
++    StreamOrder,
 +}
 +
 +#[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +232,7 @@ index 0000000..9b6c7a4
 +    // Token equality alone establishes no physical provenance or owner trust.
 +    snapshot: BTreeSet<String>,
 +    invalidated: Option<Invalidation>,
++    last_record: Option<u64>,
 +}
 +
 +impl TopologyGuard {
@@ -240,7 +242,8 @@ index 0000000..9b6c7a4
 +            || tokens.iter().any(|s| s.trim().is_empty())
 +            || snapshot.len() != tokens.len();
 +        Self { generation, snapshot,
-+            invalidated: invalid.then_some(Invalidation::InvalidSnapshot) }
++            invalidated: invalid.then_some(Invalidation::InvalidSnapshot),
++            last_record: None }
 +    }
 +
 +    fn invalidate(&mut self, reason: Invalidation) -> Decision {
@@ -258,6 +261,23 @@ index 0000000..9b6c7a4
 +            return self.invalidate(Invalidation::DeviceSetChanged);
 +        }
 +        Decision::Unchanged
++    }
++
++    // Abstract monitor-local record numbering, not Linux global uevent
++    // SEQNUM. Only synthetic tests use this; no operational source is wired.
++    // First cursor must be1; dropped/duplicate/out-of-order records deny.
++    pub fn reconcile_record(&mut self, cursor: u64, generation: u64,
++                            tokens: &[String]) -> Decision {
++        if let Some(reason) = self.invalidated { return Decision::Inhibit(reason); }
++        let expected = match self.last_record {
++            None => Some(1),
++            Some(last) => last.checked_add(1),
++        };
++        if expected != Some(cursor) {
++            return self.invalidate(Invalidation::StreamOrder);
++        }
++        self.last_record = Some(cursor);
++        self.reconcile(generation, tokens)
 +    }
 +
 +    pub fn observe(&mut self, event: Observation) -> Decision {
@@ -326,6 +346,41 @@ index 0000000..9b6c7a4
 +            assert_eq!(guard.observe(Observation::DeviceEvent), result);
 +        }
 +    }
++    #[test]
++    fn ordered_identical_records_never_grant_or_resume() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        for cursor in 1..=100 {
++            assert_eq!(guard.reconcile_record(cursor, 7, &tokens(&["a"])),
++                       Decision::Unchanged);
++        }
++        let invalid = guard.observe(Observation::MonitorLost);
++        assert_eq!(guard.reconcile_record(101, 7, &tokens(&["a"])), invalid);
++    }
++
++    #[test]
++    fn dropped_duplicate_out_of_order_records_invalidate() {
++        for cursor in [0, 1, 3, u64::MAX] {
++            let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++            assert_eq!(guard.reconcile_record(1, 7, &tokens(&["a"])),
++                       Decision::Unchanged);
++            assert_eq!(guard.reconcile_record(cursor, 7, &tokens(&["a"])),
++                       Decision::Inhibit(Invalidation::StreamOrder));
++            assert_eq!(guard.reconcile_record(2, 7, &tokens(&["a"])),
++                       Decision::Inhibit(Invalidation::StreamOrder));
++        }
++    }
++
++    #[test]
++    fn missing_initial_record_and_cursor_overflow_deny() {
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        assert_eq!(guard.reconcile_record(2, 7, &tokens(&["a"])),
++                   Decision::Inhibit(Invalidation::StreamOrder));
++        let mut guard = TopologyGuard::observe_initial(7, &tokens(&["a"]));
++        guard.last_record = Some(u64::MAX);
++        assert_eq!(guard.reconcile_record(0, 7, &tokens(&["a"])),
++                   Decision::Inhibit(Invalidation::StreamOrder));
++    }
++
 +}
 diff --git a/espanso-ui/Cargo.toml b/espanso-ui/Cargo.toml
 index 012b47e..2e4b153 100644
@@ -414,11 +469,39 @@ index 48991c8..a518052 100644
  
  default = ["modulo", "native-tls"]
  
+diff --git a/espanso/src/cli/worker/builtin/mod.rs b/espanso/src/cli/worker/builtin/mod.rs
+index 35a52d0..c5c6b1b 100644
+--- a/espanso/src/cli/worker/builtin/mod.rs
++++ b/espanso/src/cli/worker/builtin/mod.rs
+@@ -51,6 +51,13 @@ impl Default for BuiltInMatch {
+     }
+ }
+ 
++#[cfg(feature = "southbag-inject-only")]
++pub fn get_builtin_matches(_: &dyn Config) -> Vec<BuiltInMatch> {
++    // Fixed literal profile has no hidden debug/search/restart triggers.
++    Vec::new()
++}
++
++#[cfg(not(feature = "southbag-inject-only"))]
+ pub fn get_builtin_matches(config: &dyn Config) -> Vec<BuiltInMatch> {
+     let mut matches = vec![
+         debug::create_match_paste_active_config_info(),
 diff --git a/espanso/src/cli/worker/engine/mod.rs b/espanso/src/cli/worker/engine/mod.rs
-index 608bc6e..25ff02d 100644
+index 608bc6e..ea206f9 100644
 --- a/espanso/src/cli/worker/engine/mod.rs
 +++ b/espanso/src/cli/worker/engine/mod.rs
-@@ -149,15 +149,20 @@ pub fn initialize_and_spawn(
+@@ -101,6 +101,9 @@ pub fn initialize_and_spawn(
+             let preferences = crate::preferences::get_default(&paths.runtime)
+                 .expect("unable to load preferences");
+ 
++            #[cfg(feature = "southbag-inject-only")]
++            let app_info_provider = super::finite_profile::app_info_provider();
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let app_info_provider =
+                 espanso_info::get_provider().expect("unable to initialize app info provider");
+             // TODO: read interval from configs?
+@@ -149,15 +152,20 @@ pub fn initialize_and_spawn(
                  })
                  .expect("failed to initialize detector module");
              let exit_source = super::engine::funnel::exit::ExitSource::new(exit_signal, &sequencer);
@@ -440,19 +523,270 @@ index 608bc6e..25ff02d 100644
              if cfg!(target_os = "macos") {
                  sources.push(&secure_input_source);
              }
+@@ -217,6 +225,11 @@ pub fn initialize_and_spawn(
+             let choice_adapter = ChoiceSelectorAdapter::new(&modulo_search_ui);
+             let choice_extension =
+                 espanso_render::extension::choice::ChoiceExtension::new(&choice_adapter);
++            // No dynamic renderer extension in a literal-only worker, even
++            // if a future caller accidentally bypasses profile validation.
++            #[cfg(feature = "southbag-inject-only")]
++            let renderer = super::finite_profile::renderer();
++            #[cfg(not(feature = "southbag-inject-only"))]
+             let renderer = espanso_render::create(vec![
+                 &clipboard_extension,
+                 &date_extension,
+@@ -322,6 +335,23 @@ pub fn initialize_and_spawn(
+     Ok(handle)
+ }
+ 
++#[cfg(feature = "southbag-inject-only")]
++fn grant_linux_capabilities(_: bool) -> bool {
++    // Device access must come only from a separately authorized per-device
++    // policy. Never raise process-wide DAC override as a fallback.
++    false
++}
++
++#[cfg(all(test, feature = "southbag-inject-only"))]
++mod dedicated_capability_tests {
++    #[test]
++    fn neither_backend_path_requests_capabilities() {
++        assert!(!super::grant_linux_capabilities(true));
++        assert!(!super::grant_linux_capabilities(false));
++    }
++}
++
++#[cfg(not(feature = "southbag-inject-only"))]
+ fn grant_linux_capabilities(use_evdev_backend: bool) -> bool {
+     if use_evdev_backend {
+         if crate::capabilities::can_use_capabilities() {
+diff --git a/espanso/src/cli/worker/finite_profile.rs b/espanso/src/cli/worker/finite_profile.rs
+new file mode 100644
+index 0000000..e1642f2
+--- /dev/null
++++ b/espanso/src/cli/worker/finite_profile.rs
+@@ -0,0 +1,181 @@
++// Conservative source-only candidate contract: literal finite key injection.
++// This validates match data, never reads devices, renders content or activates.
++use anyhow::{bail, Result};
++use espanso_config::matches::{store::MatchStore, store::MatchSet, MatchCause,
++    MatchEffect, TextFormat, TextInjectMode};
++
++pub fn app_info_provider() -> Box<dyn espanso_info::AppInfoProvider> {
++    struct NoDesktopProbe;
++    impl espanso_info::AppInfoProvider for NoDesktopProbe {
++        fn get_info(&self) -> espanso_info::AppInfo {
++            espanso_info::AppInfo { title: None, exec: None, class: None }
++        }
++    }
++    Box::new(NoDesktopProbe)
++}
++
++pub fn renderer() -> impl espanso_render::Renderer {
++    espanso_render::create(Vec::new())
++}
++
++pub fn validate_configs(store: &dyn espanso_config::config::ConfigStore) -> Result<()> {
++    validate_backend(store.default().backend())?;
++    for config in store.configs() {
++        validate_backend(config.backend())?;
++    }
++    Ok(())
++}
++
++fn validate_backend(backend: espanso_config::config::Backend) -> Result<()> {
++    if !matches!(backend, espanso_config::config::Backend::Inject) {
++        bail!("inject-only profile forbids automatic or clipboard backend in any config");
++    }
++    Ok(())
++}
++
++pub fn validate_store(store: &dyn MatchStore) -> Result<()> {
++    validate_set(store.query(&store.loaded_paths()))
++}
++
++fn validate_set(set: MatchSet<'_>) -> Result<()> {
++    if !set.global_vars.is_empty() {
++        bail!("inject-only profile forbids global variables");
++    }
++    for item in set.matches {
++        match &item.cause {
++            MatchCause::Trigger(cause) if !cause.triggers.is_empty()
++                && cause.triggers.iter().all(|s| !s.is_empty()) => {}
++            _ => bail!("inject-only profile requires nonempty literal triggers"),
++        }
++        match &item.effect {
++            MatchEffect::Text(text) if text.vars.is_empty()
++                && matches!(text.format, TextFormat::Plain)
++                && !matches!(text.force_mode, Some(TextInjectMode::Clipboard))
++                && !text.replace.contains("{{") && !text.replace.contains("}}")
++                && !text.replace.contains("$|") => {}
++            _ => bail!("inject-only profile requires plain literal key replacement"),
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use espanso_config::matches::{Match, TriggerCause, TextEffect, Variable,
++        RegexCause, ImageEffect};
++
++    fn literal() -> Match {
++        Match { cause: MatchCause::Trigger(TriggerCause {
++                triggers: vec!["fixture".into()], ..Default::default() }),
++            effect: MatchEffect::Text(TextEffect {
++                replace: "Fixture".into(), force_mode: Some(TextInjectMode::Keys),
++                ..Default::default() }), ..Default::default() }
++    }
++    fn check(item: &Match) -> Result<()> {
++        validate_set(MatchSet { matches: vec![item], global_vars: vec![] })
++    }
++
++    #[test]
++    fn production_app_provider_never_queries_desktop() {
++        let provider = app_info_provider();
++        let info = provider.get_info();
++        assert!(info.title.is_none() && info.exec.is_none() && info.class.is_none());
++    }
++
++    #[test]
++    fn exact_production_renderer_has_no_dynamic_extensions() {
++        use espanso_render::{Renderer, Template, Context, RenderOptions, RenderResult};
++        let renderer = renderer();
++        let literal = Template { body: "Finite café".into(), ..Default::default() };
++        assert!(matches!(renderer.render(&literal, &Context::default(), &RenderOptions::default()),
++            RenderResult::Success(text) if text == "Finite café"));
++        for kind in ["shell", "script", "clipboard", "form", "choice", "date", "echo", "random"] {
++            let template = Template { body: "{{fixture}}".into(), vars: vec![espanso_render::Variable {
++                name: "fixture".into(), var_type: kind.into(), ..Default::default()
++            }], ..Default::default() };
++            assert!(matches!(renderer.render(&template, &Context::default(), &RenderOptions::default()),
++                RenderResult::Error(_)), "extension {kind} must not resolve");
++        }
++    }
++
++    #[test]
++    fn backend_must_be_explicit_key_injection_in_every_config() {
++        use espanso_config::config::Backend;
++        assert!(validate_backend(Backend::Inject).is_ok());
++        assert!(validate_backend(Backend::Auto).is_err());
++        assert!(validate_backend(Backend::Clipboard).is_err());
++    }
++
++    #[test]
++    fn complete_loaded_store_is_validated_not_just_active_group() {
++        struct Store { items: Vec<Match> }
++        impl MatchStore for Store {
++            fn loaded_paths(&self) -> Vec<String> { vec!["first".into(), "hidden".into()] }
++            fn query(&self, paths: &[String]) -> MatchSet<'_> {
++                assert_eq!(paths, &["first", "hidden"]);
++                MatchSet { matches: self.items.iter().collect(), global_vars: vec![] }
++            }
++        }
++        let mut invalid = literal();
++        invalid.effect = MatchEffect::Image(ImageEffect::default());
++        assert!(validate_store(&Store { items: vec![literal(), invalid] }).is_err());
++    }
++
++    #[test]
++    fn empty_dormant_and_literal_profiles_pass_validation_only() {
++        assert!(validate_set(MatchSet { matches: vec![], global_vars: vec![] }).is_ok());
++        assert!(check(&literal()).is_ok());
++        let mut item = literal();
++        item.effect = MatchEffect::Text(TextEffect {
++            replace: "Finite unicode: café".into(), ..Default::default() });
++        assert!(check(&item).is_ok());
++    }
++
++    #[test]
++    fn global_or_match_variables_deny_before_rendering() {
++        let variable = Variable { var_type: "shell".into(), ..Default::default() };
++        assert!(validate_set(MatchSet { matches: vec![], global_vars: vec![&variable] }).is_err());
++        for kind in ["shell", "script", "clipboard", "form", "choice", "date", "echo", "random", "unknown"] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect {
++                text.vars.push(Variable { var_type: kind.into(), ..Default::default() });
++            }
++            assert!(check(&item).is_err(), "variable type {kind} must deny");
++        }
++    }
++
++    #[test]
++    fn template_cursor_html_markdown_clipboard_image_deny() {
++        for replace in ["{{fixture}}", "prefix{{", "suffix}}", "cursor$|tail"] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect { text.replace = replace.into(); }
++            assert!(check(&item).is_err());
++        }
++        for format in [TextFormat::Html, TextFormat::Markdown] {
++            let mut item = literal();
++            if let MatchEffect::Text(text) = &mut item.effect { text.format = format; }
++            assert!(check(&item).is_err());
++        }
++        let mut item = literal();
++        if let MatchEffect::Text(text) = &mut item.effect { text.force_mode = Some(TextInjectMode::Clipboard); }
++        assert!(check(&item).is_err());
++        item.effect = MatchEffect::Image(ImageEffect::default());
++        assert!(check(&item).is_err());
++        item.effect = MatchEffect::None;
++        assert!(check(&item).is_err());
++    }
++
++    #[test]
++    fn regex_none_and_empty_triggers_deny() {
++        let mut item = literal();
++        item.cause = MatchCause::None;
++        assert!(check(&item).is_err());
++        item.cause = MatchCause::Regex(RegexCause { regex: ".*".into() });
++        assert!(check(&item).is_err());
++        for triggers in [vec![], vec![String::new()], vec!["ok".into(), String::new()]] {
++            item.cause = MatchCause::Trigger(TriggerCause { triggers, ..Default::default() });
++            assert!(check(&item).is_err());
++        }
++    }
++}
 diff --git a/espanso/src/cli/worker/mod.rs b/espanso/src/cli/worker/mod.rs
-index 12d2756..3b392a8 100644
+index 12d2756..1f1cddf 100644
 --- a/espanso/src/cli/worker/mod.rs
 +++ b/espanso/src/cli/worker/mod.rs
-@@ -39,6 +39,7 @@ mod config;
+@@ -39,8 +39,11 @@ mod config;
  mod context;
  mod daemon_monitor;
  mod engine;
 +#[cfg(not(feature = "southbag-inject-only"))]
  mod ipc;
  mod match_cache;
++#[cfg(feature = "southbag-inject-only")]
++mod finite_profile;
  mod secure_input;
-@@ -143,8 +144,13 @@ fn worker_main(args: CliModuleArgs) -> i32 {
+ mod stats_recorder;
+ mod ui;
+@@ -50,7 +53,7 @@ pub fn new() -> CliModule {
+     CliModule {
+         requires_paths: true,
+         requires_config: true,
+-        requires_linux_capabilities: true,
++        requires_linux_capabilities: !cfg!(feature = "southbag-inject-only"),
+         enable_logs: true,
+         log_mode: super::LogMode::AppendOnly,
+         subcommand: "worker".to_string(),
+@@ -83,6 +86,14 @@ fn worker_main(args: CliModuleArgs) -> i32 {
+         .match_store
+         .expect("missing match store in worker main");
+ 
++    // Validate the complete loaded rule set before engine/detector/IPC setup.
++    #[cfg(feature = "southbag-inject-only")]
++    if let Err(error) = finite_profile::validate_configs(&*config_store)
++        .and_then(|_| finite_profile::validate_store(&*match_store)) {
++        error!("refusing non-finite inject-only profile: {error}");
++        return WORKER_GENERAL_ERROR;
++    }
++
+     // TODO: show config loading errors in a GUI, if any
+ 
+     let use_evdev_backend = if cfg!(feature = "wayland") {
+@@ -143,8 +154,13 @@ fn worker_main(args: CliModuleArgs) -> i32 {
      .expect("unable to initialize engine");
  
      // Setup the IPC server
