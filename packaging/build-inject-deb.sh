@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 # Build a dormant package from the exact local reviewed artifact. This does
 # not download, execute, install, enable or activate the worker.
-# Usage: build-inject-deb.sh BINARY SOURCE_TAR OUTDIR
+# Usage: build-inject-deb.sh BINARY SOURCE_TAR OUTDIR [ci-candidate]
+# The explicit CI lane is a separately versioned qualification candidate.
 set -euo pipefail
 binary=${1:?}; source=${2:?}; out=${3:?}
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-expected=96da5411cc1b20a3b46fe7de277aa3b047d182694b006720f358a341db11aeef
+case ${4:-guest-tested} in
+ guest-tested)
+ expected=96da5411cc1b20a3b46fe7de277aa3b047d182694b006720f358a341db11aeef
+ version=2.4.1+southbag.1.minimal
+ provenance=inject-provenance.txt ;;
+ ci-candidate)
+ expected=7b017fcaefd6f7e7137840be54e094d263c4fcdcca3de672335200190bcce10c
+ version=2.4.1+southbag.1.minimal.ci1
+ provenance=inject-ci-provenance.txt ;;
+ *) echo 'Unknown exact-artifact lane' >&2; exit 1 ;;
+esac
 [[ $(sha256sum "$binary" | cut -d' ' -f1) = "$expected" ]] || { echo 'Unrecognized worker artifact' >&2; exit 1; }
 # Source contents must not include local build logs/credentials or private
 # provenance. This pinned archive is generated from the tracked product files.
@@ -22,10 +33,10 @@ cp -R "$repo/image/config/includes.chroot/etc/southbag/espanso" "$root/etc/south
 install -d -m 755 "$root/etc/southbag/espanso/packages"
 find "$root/etc/southbag" -type d -exec chmod 755 {} +
 find "$root/etc/southbag" -type f -exec chmod 644 {} +
-cp "$repo/packaging/inject-provenance.txt" "$root/usr/share/doc/southbag-inject/"
-cat > "$root/DEBIAN/control" <<'CTRL'
+cp "$repo/packaging/$provenance" "$root/usr/share/doc/southbag-inject/"
+cat > "$root/DEBIAN/control" <<CTRL
 Package: southbag-inject
-Version: 2.4.1+southbag.1.minimal
+Version: $version
 Architecture: amd64
 Maintainer: Southbag Agent <agent@southbag.cc>
 Depends: adduser, systemd, libc6 (>= 2.39), libgcc-s1, libbz2-1.0, libxkbcommon0
@@ -42,5 +53,12 @@ cp "$repo/image/config/hooks/normal/0012-inject-user.hook.chroot" "$root/DEBIAN/
 cp "$repo/image/config/hooks/normal/0012-inject-user.hook.chroot" "$root/DEBIAN/preinst"
 chmod 755 "$root/DEBIAN/postinst" "$root/DEBIAN/preinst"
 mkdir -p "$out"
-install -m 644 "$source" "$out/southbag-inject_2.4.1+southbag.1.minimal_source.tar.gz"
-dpkg-deb --root-owner-group --build "$root" "$out/southbag-inject_2.4.1+southbag.1.minimal_amd64.deb"
+install -m 644 "$source" "$out/southbag-inject_${version}_source.tar.gz"
+if [[ ${4:-guest-tested} = ci-candidate ]]; then
+ # Stable candidate package across build hosts. This does not assert binary
+ # reproducibility: the exact selected binary is still independently pinned.
+ find "$root" -print0 | xargs -0 touch -h -d @1793964405
+ SOURCE_DATE_EPOCH=1793964405 dpkg-deb -Zgzip -z9 --uniform-compression --root-owner-group --build "$root" "$out/southbag-inject_${version}_amd64.deb"
+else
+ dpkg-deb --root-owner-group --build "$root" "$out/southbag-inject_${version}_amd64.deb"
+fi
