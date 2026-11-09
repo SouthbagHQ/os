@@ -4,11 +4,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, statSync, readdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const HELPER = new URL("../image/config/includes.chroot/usr/local/bin/southbag-nav-state", import.meta.url).pathname;
+// Do not depend on the git checkout's exec bit: web flows land files as
+// 644 (build.sh restores the bit for the image; cf. lock-inhibit.test.mjs).
+chmodSync(HELPER, 0o755);
+
 const ENUM = ["account_bound", "binding_failed", "account_cleared", "session_reset"];
 
 function run(stateDir, arg) {
