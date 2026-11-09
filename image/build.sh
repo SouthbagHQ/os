@@ -53,6 +53,7 @@ done
 # Same story for the lock helpers shipped via includes.chroot: web flows
 # land files as 644 and the lock is useless if these are not executable.
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-device-session"
+chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-nav-state"
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-shell"
 chmod +x "$here/config/includes.chroot/usr/local/bin/southbag-lock" \
   "$here/config/includes.chroot/usr/local/bin/southbag-unlock" \
