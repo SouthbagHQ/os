@@ -4,16 +4,28 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const NAVBIN = join(here, "..", "image", "config", "includes.chroot", "usr", "local", "bin", "southbag-nav-state");
+// Do not depend on the git checkout's exec bit: web flows land files as
+// 644 (build.sh restores the bit for the image; cf. lock-inhibit.test.mjs).
+chmodSync(NAVBIN, 0o755);
 const ACCOUNT = join(here, "..", "image", "shell-extra", "cgi-bin", "account");
 const MANAGER = join(here, "..", "image", "config", "includes.chroot", "usr", "local", "bin", "southbag-device-session");
-const FIXBIN = join(here, "fixtures", "bin");
+const FIXBIN_SRC = join(here, "fixtures", "bin");
+// Fixture shims land 644 in web-published checkouts and the manager execs
+// them directly, so provision executable copies per run (same pattern as
+// device-session.test.mjs) instead of trusting tree modes.
+const FIXBIN = mkdtempSync(join(tmpdir(), "navstate-shim-"));
+for (const f of ["systemd-run", "systemctl"]) {
+  const dst = join(FIXBIN, f);
+  writeFileSync(dst, readFileSync(join(FIXBIN_SRC, f)));
+  chmodSync(dst, 0o755);
+}
 const TOKEN = "valid.token_abc-123~456";
 const SUB = "user-1";
 const EMAIL = "inw@mail.instinct.com";
