@@ -1,0 +1,40 @@
+#!/bin/sh
+# Journey observability: records the device sign-in journey's coarse phase
+# as ONE hardcoded word in $state/nav-state, so an automated journey can
+# tell where the shell's browser got to without capturing pixels, reading
+# URLs, or touching page state.
+#
+# Safety contract:
+# * The only values ever written are the fixed enum below. Callers pass a
+#   single symbolic word; anything missing, malformed or hostile records
+#   "unknown" (fail-closed), so this channel can never carry a URL, query,
+#   fragment, token, identifier, input value or page-controlled text, even
+#   if a caller is compromised.
+# * Coarse state only: nothing about who, which account, which client, or
+#   what was entered.
+# * Best-effort: a failure here must never break the journey.
+# * Every word is era-bound by its call site: writers record only when the
+#   era they belong to is still the live one (checked under the session
+#   lock), so a stale write can never masquerade as current-session state.
+#   token_exchanged was dropped: the identity-auth CGI carries no era
+#   identity, so that milestone could not be era-bound without changing the
+#   page/proxy contract.
+#
+# Concurrency: the temp file is per-process, so two milestones written at
+# the same time can never clobber each other's temp file (a shared temp
+# name let one writer's rename fail or pick up the other's content,
+# silently dropping a milestone). Last completed rename wins, which is the
+# intended last-milestone-wins semantics.
+set -u
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+word=unknown
+case "${1:-}" in
+  account_bound|binding_failed|account_cleared|session_reset)
+    word=$1 ;;
+esac
+mkdir -p "$state" 2>/dev/null || true
+chmod 700 "$state" 2>/dev/null || true
+tmp=$state/.nav-state.$$
+( umask 077; printf '%s\n' "$word" > "$tmp" && mv "$tmp" "$state/nav-state" ) 2>/dev/null || true
+rm -f "$tmp" 2>/dev/null || true
+exit 0
