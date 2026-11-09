@@ -38,6 +38,7 @@ state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
 root="$state/device-session"
 origin=${SOUTHBAG_IDENTITY_ORIGIN:-https://identity.southbag.cc}
 wgetbin=${SOUTHBAG_WGET:-busybox wget}
+navbin=${SOUTHBAG_NAV_STATE_BIN:-/usr/local/bin/southbag-nav-state}
 
 fail() { printf 'Status: %s\r\nContent-Type: text/plain\r\n\r\n%s\r\n' "$1" "$2"; exit 0; }
 
@@ -63,7 +64,22 @@ if ! printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
  # shellcheck disable=SC2086
  resp=$($wgetbin -q -T 8 -O - \
   --header "Authorization: Bearer $token" \
-  "$origin/api/auth/oauth2/userinfo" 2>/dev/null) || fail 502 "identity refused"
+  "$origin/api/auth/oauth2/userinfo" 2>/dev/null) || {
+   # Failure milestone, era-bound like the writes below: a refusal from a
+   # retired era must not clobber a live era's journey phase. The exchange
+   # itself stays outside the lock (network latency must not hold a reset).
+   # The era check is made atomically against teardown under the session
+   # lock, non-blocking: contention means a reset/launch is in flight, which
+   # is exactly the case to skip. The 502 response is unchanged either way.
+   (
+    exec 8>"$state/session.lock"
+    flock -n -x 8 || exit 0
+    cur=$([ -f "$root/generation" ] && cat "$root/generation" || true)
+    { [ -n "$posted" ] && [ -n "$cur" ] && [ "$posted" = "$cur" ]; } || exit 0
+    "$navbin" binding_failed || true
+   ) || true
+   fail 502 "identity refused"
+  }
 
  # This caller field is NOT an identity assertion or authorization. It is
  # only the callback's consistency fence against its verified ID-token sub.
@@ -83,9 +99,11 @@ current=$([ -f "$root/generation" ] && cat "$root/generation" || true)
 
 if printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
  rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+ "$navbin" account_cleared || true
  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":false}'
  exit 0
 fi
 
 ( umask 077; printf '%s\t%s\n' "$sub" "$email" > "$state/account" )
+"$navbin" account_bound || true
 printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":true}'
