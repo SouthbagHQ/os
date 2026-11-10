@@ -1,0 +1,135 @@
+#!/bin/sh
+# PAM auth helper for the session lock (see /etc/pam.d/swaylock).
+#
+# Reads one bounded token on stdin (pam_exec expose_authtok): the typed Southbag
+# password, or a 6-digit TOTP while a two-factor challenge is pending.
+# Verifies it ONLINE against Southbag Identity and only accepts when the
+# returned user id is exactly the account this device is signed in to
+# (recorded at login by /cgi-bin/account from Identity's own userinfo).
+#
+# Fail closed on everything: wrong secret, wrong account, 4xx/5xx, network
+# error, malformed JSON, missing fields. "It shouldn't work while offline"
+# is the whole point - no cached credential, no local password, no grace.
+# The lock still ENGAGES offline; it just cannot be opened until Identity
+# is reachable again.
+#
+# Secrets never touch argv, logs or persistent files: the request body is a
+# 0600 tmpfs file posted with wget --post-file and deleted on exit; response
+# headers (which carry a Set-Cookie session token on success) land in
+# another 0600 tmpfs file, are read only for the pending two-factor
+# challenge cookie, and are deleted on exit. The session cookie a
+# successful verify sets is discarded unread.
+#
+# SOUTHBAG_IDENTITY_ORIGIN / SOUTHBAG_WGET / SOUTHBAG_STATE_DIR exist for the
+# mock-contract tests (tests/unlock.test.mjs); the device never sets them.
+set -u
+PATH=/usr/local/bin:/usr/bin:/bin; export PATH
+
+origin=${SOUTHBAG_IDENTITY_ORIGIN:-https://identity.southbag.cc}
+wgetbin=${SOUTHBAG_WGET:-busybox wget}
+
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+acct="$state/account"
+jar="$state/twofa-cookie"
+req="$state/.req.$$"
+resp="$state/.resp.$$"
+hdrs="$state/.hdrs.$$"
+trap 'rm -f "$req" "$resp" "$hdrs"' EXIT
+umask 077
+
+[ -r "$acct" ] || exit 1
+sub=$(cut -f1 "$acct" 2>/dev/null)
+email=$(cut -f2 "$acct" 2>/dev/null)
+[ -n "${sub:-}" ] && [ -n "${email:-}" ] || exit 1
+
+# pam_exec writes a NUL-terminated token; the native client writes a line.
+# EOF without a delimiter is also valid. Read at most MAXPW (128 bytes),
+# one optional delimiter, plus one overflow sentinel. Never silently accept
+# a truncated prefix or a second line/token. jq handles NUL before the shell
+# can discard it; only a validated NUL-free value enters the shell variable.
+# The nonsecret suffix preserves trailing NULs with jq 1.6 raw-slurp, which
+# otherwise drops them before filtering. Remove exactly that suffix first.
+input=$({ dd bs=1 count=130 2>/dev/null; printf '.'; } | jq -Rser '
+ .[0:-1] |
+ if endswith("\u0000") or endswith("\n") then .[0:-1] else . end |
+ if utf8bytelength > 0 and utf8bytelength <= 128
+    and (explode | index(0) | not) and (contains("\n") | not)
+ then . else error("invalid token framing") end
+' 2>/dev/null) || exit 1
+
+# post PATH: body file $req must already be filled. Body to $resp, headers
+# (incl. status line) to $hdrs. 8s cap so a dead network fails closed fast
+# instead of freezing the unlock prompt.
+post() {
+ # shellcheck disable=SC2086
+ $wgetbin -q -S -T 8 -O "$resp" \
+  --post-file "$req" \
+  --header "Content-Type: application/json" \
+  ${cookie:+--header "Cookie: $cookie"} \
+  "$origin/api/auth$1" > /dev/null 2>"$hdrs"
+}
+
+# answered_for_us: HTTP 200 AND the user id in the answer is exactly this
+# device's account. Parsed with jq; a body that is not the expected shape
+# fails the check, whatever the status line said.
+answered_for_us() {
+ grep -q '^  HTTP/1\.[01] 200' "$hdrs" || return 1
+ uid=$(jq -r '.user.id // empty' "$resp" 2>/dev/null) || return 1
+ [ -n "$uid" ] && [ "$uid" = "$sub" ]
+}
+
+# save_challenge_cookie: keep the pending two-factor cookie pair(s), 0600 in
+# tmpfs, so the next prompt can be answered with the TOTP. better-auth signs
+# the better-auth.two_factor cookie and gives it a 10-minute life; after
+# that Identity refuses the code and the customer retypes their password.
+save_challenge_cookie() {
+ : > "$jar"
+ sed -n 's/\r$//; s/^  [Ss]et-[Cc]ookie: \([^; ]*\);.*/\1/p' "$hdrs" >> "$jar" 2>/dev/null
+ [ -s "$jar" ] || rm -f "$jar"
+}
+
+# record_faceid: a successful verify just issued this account's own session
+# cookie in $hdrs. Spend it once, server-side, to learn the account's
+# enrolled Southbag ID faceId (if any) so face unlock can be offered from
+# the next lock on. The cookie is never logged or persisted; the faceId
+# alone cannot unlock anything without the enrolled person's face.
+record_faceid() {
+ sc=$(sed -n 's/\r$//; s/^  [Ss]et-[Cc]ookie: \([^; ]*\);.*/\1/p' "$hdrs" | paste -sd '; ' 2>/dev/null)
+ [ -n "$sc" ] || return 0
+ if $wgetbin -q -T 8 -O "$resp" --header "Cookie: $sc" "$origin/api/auth/southbag-id/credential" 2>/dev/null; then
+  fid=$(jq -r 'if .enrolled == true then .faceId // empty else empty end' "$resp" 2>/dev/null)
+  if [ -n "$fid" ]; then printf '%s\n' "$fid" > "$state/faceid"; else rm -f "$state/faceid"; fi
+ fi
+}
+
+cookie=""
+if [ -r "$jar" ]; then
+ cookie=$(paste -sd '; ' "$jar" 2>/dev/null)
+fi
+
+# A pending challenge plus a 6-digit entry tries TOTP first.
+if [ -n "$cookie" ] && printf '%s' "$input" | grep -qE '^[0-9]{6}$'; then
+ printf '{"code":"%s"}' "$input" > "$req"
+ if post /two-factor/verify-totp && answered_for_us; then
+  record_faceid
+  rm -f "$jar" "$state/locked"
+  exit 0
+ fi
+ # A wrong code falls through and is also tried as a password below.
+fi
+
+# JSON encode through stdin, including tabs/control characters; no secret
+# is passed as a jq argument or emitted to stdout/stderr.
+printf '%s' "$input" | jq -Rs --arg email "$email" \
+ '{email: $email, password: .}' > "$req" || exit 1
+if post /sign-in/email && answered_for_us; then
+ record_faceid
+ rm -f "$jar" "$state/locked"
+ exit 0
+fi
+# Identity accepted the password but wants a second factor: keep the
+# challenge cookie and refuse this round; the next prompt takes the code.
+if jq -e '.twoFactorRedirect == true' "$resp" >/dev/null 2>&1; then
+ save_challenge_cookie
+fi
+exit 1

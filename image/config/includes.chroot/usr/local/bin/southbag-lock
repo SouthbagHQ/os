@@ -1,0 +1,58 @@
+#!/bin/sh
+# Engages the session lock.
+#
+# swaylock is an ext-session-lock client: while it holds the lock the
+# compositor hides every window - shell, app windows, all of them - and
+# only the lock surface gets input. This is the compositor doing the
+# locking, not a page drawing over the desktop.
+#
+# Engages offline too, on purpose: the lock protects the session whenever
+# it is asked to, and unlocking simply stays impossible until Identity is
+# reachable again. The only refusal is when no account is signed in, which
+# is the one case with nothing to protect (and no account to verify an
+# unlock against, so engaging would only strand the machine).
+set -u
+PATH=/usr/local/bin:/usr/bin:/bin; export PATH
+
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+[ -r "$state/account" ] || exit 1
+pgrep -x swaylock >/dev/null 2>&1 && exit 0
+pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
+
+# Flag first: if the compositor dies under the lock, the next session must
+# come up locked again rather than expose the desktop (southbag-shell
+# re-engages, southbag-unlock clears the flag on a verified unlock). In the
+# customer's home rather than /run so this also holds across a reboot on an
+# installed system; on a live boot home is ephemeral anyway.
+# The expander worker must be stopped and its cgroup empty before any
+# credential prompt appears. The broker's inhibit is the stop barrier; an
+# OK return is the prerequisite for the prompt. A failed barrier fails
+# closed: no prompt, no locked flag, the session stays as it was - denial
+# of the lock at worst, never credential entry with capture still live.
+#
+# This image is broker-integrated, so every missing, unreadable,
+# non-runnable, or zero piece of broker state is a denial. Never-begun can
+# never be inferred from absence: a lost generation record, a crashed
+# broker oneshot, or a deleted broker executable reads exactly like a clean
+# never-begun while a capture-capable worker may still be live. Only a
+# future root-owned, explicit disabled-mode control path with proven
+# no-worker/cgroup-empty preconditions may relax any of these denials.
+broker=${SOUTHBAG_LOCK_BROKER:-/usr/local/bin/southbag-input-client}
+[ -x "$broker" ] || exit 1
+gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
+[ -n "$gen" ] || exit 1
+[ "$gen" != 0 ] || exit 1
+"$broker" inhibit "$gen" || exit 1
+
+mkdir -p "$state"
+: > "$state/locked"
+
+# The native client (password + face in one lock surface) replaces swaylock
+# only when deliberately enabled with the /etc/southbag-lockd marker. Until
+# it is proven on a real image, swaylock stays the door.
+if [ -e /etc/southbag-lockd ] && [ -x /usr/local/bin/southbag-lockd ]; then
+ exec /usr/local/bin/southbag-lockd
+fi
+
+# Test-only adapter; the image always uses the real default.
+exec ${SOUTHBAG_LOCK_SURFACE:-swaylock}

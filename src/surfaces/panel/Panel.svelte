@@ -55,6 +55,7 @@
   </div>
 
   <div class="status">
+    <span class="watching">Kevin is watching</span>
     <span class="clock">{formatTime(clock.now)}</span>
     <Battery />
     <button class="account">{firstName(customer)}</button>
@@ -62,6 +63,15 @@
 </div>
 
 <style>
+  .watching {
+    align-self: center;
+    font-size: var(--text-sm);
+    color: var(--sb-text-dim);
+    white-space: nowrap;
+  }
+  @media (max-width: 620px) {
+    .watching { display: none; }
+  }
   .panel {
     position: fixed;
     inset: auto 0 0 0;

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finish device cleanup - Southbag</title>
+<style>
+  body { background:#050608; color:#e8e8ea; font-family:system-ui,sans-serif;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; }
+  main { max-width:34rem; padding:2rem; }
+  h1 { font-size:1.4rem; }
+  p { line-height:1.5; color:#b9b9c0; }
+  button { font-size:1.1rem; padding:.8rem 2rem; border:0; border-radius:.6rem;
+           background:#3b82f6; color:#fff; cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:default; }
+  #status { margin-top:1rem; min-height:1.5em; }
+  .err { color:#f28b82; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Finish device cleanup</h1>
+  <p>The last sign-out on this device did not finish. Your private data is still
+     preserved, and no apps can start until cleanup completes.</p>
+  <p>Finishing cleanup removes the previous session's local data from this
+     device only. Other devices are not affected.</p>
+  <button id="go">Finish cleanup</button>
+  <p id="status" role="status"></p>
+</main>
+<script>
+const go = document.getElementById('go');
+const status = document.getElementById('status');
+go.addEventListener('click', async () => {
+  go.disabled = true;
+  status.className = '';
+  status.textContent = 'Cleaning up...';
+  try {
+    const gen = await fetch('/cgi-bin/device-session?generation', { method: 'POST' });
+    if (!gen.ok) throw new Error('unavailable');
+    const { generation } = await gen.json();
+    const reset = await fetch('/cgi-bin/device-session?reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generation }),
+    });
+    if (!reset.ok) throw new Error('failed');
+    status.textContent = 'Cleanup complete. The desktop will start shortly.';
+  } catch {
+    status.className = 'err';
+    status.textContent = 'Cleanup could not finish. Your data is still preserved. You can try again.';
+    go.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

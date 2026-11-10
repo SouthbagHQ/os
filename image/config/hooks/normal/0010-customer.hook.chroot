@@ -20,6 +20,9 @@ chown customer:customer /home/customer/.profile
 
 systemctl enable southbag-ready.service
 systemctl enable seatd.service
+systemctl enable southbag-console-lockdown.service
+systemctl enable southbag-input-broker.service
+systemctl enable southbag-input-broker.socket
 
 # Nothing waits for the network to come up before showing a desktop.
 systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true

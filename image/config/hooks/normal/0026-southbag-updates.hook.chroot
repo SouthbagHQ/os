@@ -1,0 +1,30 @@
+#!/bin/sh
+# Stages the Southbag update channel when - and only when - its archive
+# keyring is present in the image. Before that one-time setup (see
+# docs/updates.md) the sources entry comes out, so no device ever points
+# apt at a repo it cannot authenticate (which would make every apt
+# transaction fail). Note what is NOT staged: the image always installs
+# unattended-upgrades and the 51southbag-updates config, so Debian
+# security auto-updates and the 03:30 reboot window are active from first
+# boot, keyring or not - that half of the rollout needs no signing setup.
+set -eu
+
+keyring=/usr/share/keyrings/southbag-archive-keyring.gpg
+sources=/etc/apt/sources.list.d/southbag.sources
+
+# Undo hook 0009's build-time mask before deciding the final state.
+if [ -f /root/.southbag.sources.buildmask ]; then
+  mv /root/.southbag.sources.buildmask "$sources"
+fi
+
+if [ ! -s "$keyring" ]; then
+  echo "southbag-updates: no archive keyring in the image config; building"
+  echo "southbag-updates: WITHOUT the Southbag channel (activation pending,"
+  echo "southbag-updates: see docs/updates.md). Debian security updates stay on."
+  rm -f "$sources"
+else
+  echo "southbag-updates: archive keyring present, Southbag channel enabled."
+fi
+
+# The daily apt timers are what makes updates automatic.
+systemctl enable apt-daily.timer apt-daily-upgrade.timer

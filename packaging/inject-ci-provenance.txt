@@ -1,0 +1,11 @@
+Separate exact CI candidate, not a replacement for the sysroot guest-tested artifact.
+Source SHA256 28fc76302b6cb7f752d6a5f33fda33f04d81a3c7e880305b7d3dff4a493c22be
+Binary SHA256 7b017fcaefd6f7e7137840be54e094d263c4fcdcca3de672335200190bcce10c
+Build https://github.com/SouthbagHQ/os/actions/runs/42316164025
+Artifact 13551346517, zip SHA256 f20e7be8845c0c674a9c0b7c7f5bc0c03cd75d8c6df39c83568580059e9c4fe0
+Debian trixie GCC14.2.0-19, Rust/Cargo1.99.1.
+Features vendored-tls,southbag-inject-only; no defaults/modulo.
+Candidate-only package version 2.4.1+southbag.1.minimal.ci1.
+Root-owned empty rules, dedicated nologin uid, no device grants or enablement.
+ExecCondition=/bin/false denies every systemd start. No worker execution.
+Runtime/no-socket, physical DAC, hotplug, modifiers and graphical gates remain open.

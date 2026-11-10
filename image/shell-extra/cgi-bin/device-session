@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+navbin=${SOUTHBAG_NAV_STATE_BIN:-/usr/local/bin/southbag-nav-state}
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+[ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] && [ "${REQUEST_METHOD:-}" = "POST" ] || { printf 'Status: 403\r\n\r\n'; exit 0; }
+case "${QUERY_STRING:-}" in
+ generation)
+  file="$HOME/.local/share/southbag/device-session/generation"
+  [ -f "$file" ] || { printf 'Status: 503\r\n\r\n'; exit 0; }
+  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+  jq -Rn --arg g "$(cat "$file")" '{generation:$g}'
+  ;;
+ reset)
+  len=${CONTENT_LENGTH:-0}
+  [ "$len" -gt 0 ] && [ "$len" -lt 1024 ] || { printf 'Status: 400\r\n\r\n'; exit 0; }
+  generation=$(dd bs=1 count="$len" 2>/dev/null | jq -r '.generation // empty')
+  /usr/local/bin/southbag-device-session reset "$generation" || { printf 'Status: 503\r\n\r\n'; exit 0; }
+  # Mark the reset only while no new era has been published since: a fresh
+  # generation means a new session is live and must not read as reset. The
+  # check runs under the session lock so it is atomic against a new era's
+  # generation publish; non-blocking, skipping on contention (a publish in
+  # flight is exactly the case to skip). The 204 response is unchanged.
+  (
+   exec 8>"$state/session.lock"
+   flock -n -x 8 || exit 0
+   [ ! -f "$state/device-session/generation" ] && "$navbin" session_reset || true
+  ) || true
+  printf 'Status: 204\r\nCache-Control: no-store\r\n\r\n'
+  ;;
+ *) printf 'Status: 400\r\n\r\n' ;;
+esac

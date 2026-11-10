@@ -1,0 +1,232 @@
+#!/bin/sh
+# Private local profiles and tracked systemd user scopes. No Identity logout API.
+#
+# Apps only ever run inside tracked user scopes (KillMode=control-group), so
+# descendants that call setsid stay contained. Reset stops every tracked
+# scope against a bounded deadline, then refuses to wipe private profiles
+# while any process - tracked or escaped - still references them.
+set -eu
+umask 077
+state=${SOUTHBAG_STATE_DIR:-"$HOME/.local/share/southbag"}
+root="$state/device-session"
+mkdir -p "$root"
+chmod 700 "$state" "$root"
+# Test-only adapters; the image always uses the real defaults.
+SYSTEMD_RUN=${SOUTHBAG_DEVICE_SYSTEMD_RUN:-systemd-run}
+SYSTEMCTL=${SOUTHBAG_DEVICE_SYSTEMCTL:-systemctl}
+CGROUP_ROOT=${SOUTHBAG_DEVICE_CGROUP_ROOT:-/sys/fs/cgroup}
+COG=${SOUTHBAG_DEVICE_COG:-/usr/bin/cog}
+START_DEADLINE=${SOUTHBAG_DEVICE_START_DEADLINE:-10}
+PUBLISH_DEADLINE=${SOUTHBAG_DEVICE_PUBLISH_DEADLINE:-15}
+STOP_DEADLINE=${SOUTHBAG_DEVICE_STOP_DEADLINE:-15}
+
+# Stable lock lives outside the profile being erased. All binding, launch and
+# reset operations take this same lock, including late OAuth binding writes.
+exec 9>"$state/session.lock"
+flock -x 9
+
+unit_cg() { "$SYSTEMCTL" --user show "$1" --property=ControlGroup --value 2>/dev/null || true; }
+
+unit_active() { "$SYSTEMCTL" --user is-active --quiet "$1" 2>/dev/null; }
+
+# Bounded stop: request the stop, then wait out the unit ourselves so a stuck
+# scope can neither hang reset nor look stopped while it still runs. On
+# timeout the note file is kept so a later reset retries the same unit.
+# Bounded stop of one unit: request the stop, then wait out the unit ourselves
+# so a stuck scope can neither hang reset nor look stopped while it still runs.
+stop_unit() {
+ unit=$1
+ cg=$(unit_cg "$unit")
+ if unit_active "$unit"; then
+  "$SYSTEMCTL" --user stop "$unit" >/dev/null 2>&1 &
+  stopper=$!
+  n=0
+  while unit_active "$unit"; do
+   n=$((n+1))
+   if [ "$n" -ge $((STOP_DEADLINE*10)) ]; then kill "$stopper" 2>/dev/null || true; return 1; fi
+   sleep .1
+  done
+  wait "$stopper" 2>/dev/null || true
+ fi
+ # API status alone is not enough: no tracked writer may remain.
+ if [ -n "$cg" ] && [ -r "$CGROUP_ROOT$cg/cgroup.events" ]; then
+  ! grep -q '^populated 1$' "$CGROUP_ROOT$cg/cgroup.events" || { echo "stop_unit: $unit cgroup still populated" >&2; return 1; }
+ fi
+ return 0
+}
+
+# A crash can tear the note write (observed: 0-byte note after a hard kill).
+# The unit name is derived from the note FILENAME under a strict allowlist,
+# never from note content alone; content only cross-checks. Anything odd -
+# symlink, foreign-owned, unexpected or unsafe name - fails closed and keeps
+# the note so a later reset retries.
+stop_scope() {
+ note=$1
+ { [ -f "$note" ] || [ -L "$note" ]; } || return 0
+ [ -L "$note" ] && return 1
+ [ -O "$note" ] || return 1
+ base=${note##*/}
+ case "$base" in
+  shell.unit|recovery.unit) name=${base%.unit} ;;
+  app-*.unit) name=${base%.unit}; case "$name" in ''|*[!a-z0-9-]*) return 1 ;; esac ;;
+  *) return 1 ;;
+ esac
+ unit="southbag-device-$name.scope"
+ content=$(cat "$note" 2>/dev/null || true)
+ if [ -n "$content" ] && [ "$content" != "$unit" ]; then return 1; fi
+ stop_unit "$unit" || return 1
+ rm -f "$note"
+}
+
+# The ready marker is written by a process INSIDE the scope, so its presence
+# proves the child is contained before we record the unit. Any failure stops
+# the half-started unit: a launch that errors never leaves an untracked scope.
+start_scope() {
+ name=$1; shift
+ unit="southbag-device-$name"
+ ready="$root/$name.ready"
+ rm -f "$ready"
+ "$SYSTEMD_RUN" --user --scope --collect --unit="$unit" --property=KillMode=control-group sh -c 'printf ready >"$1"; shift; exec "$@"' sh "$ready" "$@" 9>&- >/dev/null 2>&1 </dev/null &
+ runner=$!
+ n=0
+ while :; do
+  if [ -f "$ready" ]; then
+   cg=$(unit_cg "$unit.scope")
+   if [ -n "$cg" ]; then
+    rm -f "$ready"
+    # Atomic visibility (temp + rename) plus best-effort durability before the
+    # note is relied on: a torn note must never appear. The publish is
+    # non-interactive and bounded: mv -f never prompts, stdin is /dev/null so
+    # a prompt could never block (observed: a non-writable leftover note made
+    # mv read the console for an overwrite answer, holding the session lock
+    # and starving resets), and the deadline frees the lock on a stuck
+    # publish - a failed publish stops the half-started unit like any launch
+    # failure, and the supervisor's retry re-takes the lock cleanly.
+    printf '%s\n' "$unit.scope" >"$root/.$name.unit.tmp" && sync -f "$root/.$name.unit.tmp" 2>/dev/null
+    if ! timeout "$PUBLISH_DEADLINE" mv -f "$root/.$name.unit.tmp" "$root/$name.unit" </dev/null; then
+     "$SYSTEMCTL" --user stop "$unit.scope" >/dev/null 2>&1 || true
+     rm -f "$root/.$name.unit.tmp"
+     return 1
+    fi
+    sync -f "$root" 2>/dev/null || true
+    return 0
+   fi
+  fi
+  if ! kill -0 "$runner" 2>/dev/null && [ ! -f "$ready" ] && ! unit_active "$unit.scope"; then break; fi
+  n=$((n+1))
+  [ "$n" -lt $((START_DEADLINE*10)) ] || break
+  sleep .1
+ done
+ "$SYSTEMCTL" --user stop "$unit.scope" >/dev/null 2>&1 || true
+ rm -f "$ready"
+ return 1
+}
+
+# A process that escaped its scope would keep writing or recreate a private
+# profile after reset. Scan /proc for any same-user process holding the
+# private root (open file or command line) and fail closed when one exists.
+escaped_writers() {
+ # The cmdline heuristic skips our own ancestor chain: callers legitimately
+ # carry the root path in their argv (e.g. --user-data-dir=$root/browser),
+ # which is not a live writer. Ancestors are NOT exempt from the fd and maps
+ # checks: a real open handle or mapping under the root always blocks the
+ # wipe. This scan is a seatbelt, not proof - later opens, renames, foreign
+ # mounts and /proc races cannot be closed here; the cgroup stop is primary.
+ chain=$(p=$$
+  while [ "$p" -gt 1 ] 2>/dev/null && [ -r "/proc/$p/stat" ]; do
+   printf '%s ' "$p"
+   rest=$(cut -d')' -f2- "/proc/$p/stat" 2>/dev/null) || break
+   set -- $rest
+   p=${2:-1}
+  done)
+ for p in /proc/[0-9]*; do
+  pid=${p#/proc/}
+  [ "$pid" = "$$" ] && continue
+  case " $chain" in
+   *" $pid "*) ;; # ancestor: argv may legitimately mention the root
+   *) if grep -aqF "$root/" "$p/cmdline" 2>/dev/null; then return 0; fi ;;
+  esac
+  for fd in "$p"/fd/*; do
+   [ -e "$fd" ] || continue
+   case "$(readlink "$fd" 2>/dev/null || true)" in "$root/"*) return 0 ;; esac
+  done
+  if grep -aqF "$root/" "$p/maps" 2>/dev/null; then return 0; fi
+ done
+ return 1
+}
+
+case "${1:-}" in
+ shell)
+  [ ! -e "$root/blocked" ] || exit 1
+  mkdir -p "$root/wpe-data" "$root/wpe-cache" "$root/browser"
+  if [ ! -f "$root/generation" ]; then
+   cat /proc/sys/kernel/random/uuid >"$root/.generation.tmp" && sync -f "$root/.generation.tmp" 2>/dev/null
+   # Same non-interactive bounded publish as the scope note above.
+   timeout "$PUBLISH_DEADLINE" mv -f "$root/.generation.tmp" "$root/generation" </dev/null || { rm -f "$root/.generation.tmp"; exit 1; }
+   sync -f "$root" 2>/dev/null || true
+   # A new era invalidates the previous era's journey-phase record: clear it
+   # so a stale milestone can never masquerade as this session's state.
+   rm -f "$state/nav-state"
+  fi
+  start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --bg-color='#050608' http://127.0.0.1:8080/
+  ;;
+ launch)
+  [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ -f "$root/generation" ] || exit 1
+  name=$2; shift 2
+  case "$name" in browser|files|banking|office|chat|code|branches|lore|terminal|kevin|settings) ;; *) exit 1 ;; esac
+  start_scope "app-$name-$$" env SOUTHBAG_DEVICE_GENERATION="$(cat "$root/generation")" XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$@"
+  ;;
+ recovery)
+  # Protected cleanup-retry surface: allowed ONLY while a reset is blocked.
+  # Never starts old session apps and carries no account/credential UI. Its
+  # profile lives on volatile runtime tmpfs, outside the private root, so the
+  # surface itself can never trip the escaped-writer scan or hold wiped data.
+  [ -e "$root/blocked" ] && [ -f "$root/generation" ] || exit 1
+  rdata="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/southbag-recovery"
+  mkdir -p "$rdata/data" "$rdata/cache"
+  start_scope recovery env XDG_DATA_HOME="$rdata/data" XDG_CACHE_HOME="$rdata/cache" "$COG" --gapplication-app-id=cc.southbag.recovery --platform=wl --bg-color='#050608' http://127.0.0.1:8080/recovery.html
+  ;;
+ reset)
+  expected=${2:-}
+  if [ -z "$expected" ] || [ ! -f "$root/generation" ] || [ "$(cat "$root/generation")" != "$expected" ]; then echo "reset: generation mismatch" >&2; exit 1; fi
+  touch "$root/blocked"
+  sync -f "$root/blocked" 2>/dev/null || true
+  # Account removed first under lock: Browser guard stops accepting callbacks.
+  rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+  # The journey-phase record belongs to the era being torn down: clear it
+  # with the account note, under the same lock, so a dead era's milestone
+  # (e.g. account_bound) can never outlive its session and masquerade as
+  # current state. New-era shell start also clears it at generation publish.
+  rm -f "$state/nav-state"
+  sync -f "$state" 2>/dev/null || true
+  failed=0
+  for note in "$root"/*.unit; do
+   { [ -f "$note" ] || [ -L "$note" ]; } || continue
+   # The recovery surface stays up across the reset it triggered: killing it
+   # here would tear down the very page that must show the outcome. Its
+   # renderer profile lives on volatile tmpfs OUTSIDE the wiped root, so it
+   # can neither hold wiped data nor trip the path-based escaped-writer
+   # scan - which still refuses the wipe if any process, the renderer
+   # included, holds a real handle under the root. The supervisor retires
+   # the surface itself once this reset's HTTP answer has had its moment.
+   case "$note" in */recovery.unit) continue ;; esac
+   stop_scope "$note" || failed=1
+  done
+  # Notes are only hints; live user scopes are ground truth. Stop any tracked-
+  # name scope still alive even if its note was torn or never written (the
+  # window between scope start and note record).
+  for u in $("$SYSTEMCTL" --user list-units --type=scope --no-legend 2>/dev/null | awk '{print $1}'); do
+   case "$u" in
+    southbag-device-recovery.scope) ;; # see the recovery.unit note above
+    southbag-device-*.scope) stop_unit "$u" || failed=1 ;;
+   esac
+  done
+  # Never wipe while any writer, tracked or escaped, can still touch profiles.
+  [ "$failed" -eq 0 ] || { echo "reset: a scope stop failed closed" >&2; exit 1; }
+  ! escaped_writers || { echo "reset: escaped writer still holds the profile root" >&2; exit 1; }
+  rm -rf "$root/wpe-data" "$root/wpe-cache" "$root/browser"
+  rm -f "$root/generation"
+  rm -f "$root/blocked"
+  ;;
+ *) exit 2 ;;
+esac

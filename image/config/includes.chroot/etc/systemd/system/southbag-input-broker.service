@@ -1,0 +1,16 @@
+[Unit]
+Description=Southbag input expander broker (root-owned lifecycle authority)
+# Establishes the root-owned broker generation before any session can lock
+# or present a credential prompt. The broker only ever inhibits: there is
+# no activation path until a broker-owned verifier exists.
+DefaultDependencies=no
+After=local-fs.target
+Before=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/southbag-input-broker begin-generation
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

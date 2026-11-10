@@ -9,6 +9,16 @@ on:
       - "index.html"
       - ".github/workflows/iso.yml"
   workflow_dispatch:
+    inputs:
+      dormant_ci1:
+        description: 'Include the separately qualified exact dormant ci1 package; no activation'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   build:
@@ -22,8 +32,31 @@ jobs:
       - name: Build the shell for the device
         run: bun run build:device
 
+      - name: Download the exact qualified CI artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.dormant_ci1
+        uses: actions/download-artifact@v4
+        with:
+          name: dormant-inject-source-candidate
+          repository: SouthbagHQ/os
+          run-id: 42316164025
+          github-token: ${{ github.token }}
+          path: out/inject-input
+
+      - name: Verify and package the exact ci1 diagnostic input
+        if: github.event_name == 'workflow_dispatch' && inputs.dormant_ci1
+        run: |
+          # Builder verifies exact selected binary/source, never executes it.
+          bash packaging/build-inject-deb.sh out/inject-input/espanso-candidate out/inject-input/source.tar.gz out/inject-ci1 ci-candidate
+          # Stager independently verifies the guest-tested package envelope.
+          bash packaging/stage-inject-image.sh out/inject-ci1/southbag-inject_2.4.1+southbag.1.minimal.ci1_amd64.deb out/inject-input/source.tar.gz ci1
+          echo "SOUTHBAG_INJECT_DEB=$GITHUB_WORKSPACE/out/inject-ci1/southbag-inject_2.4.1+southbag.1.minimal.ci1_amd64.deb" >>"$GITHUB_ENV"
+          echo "SOUTHBAG_INJECT_SOURCE=$GITHUB_WORKSPACE/out/inject-input/source.tar.gz" >>"$GITHUB_ENV"
+          echo "SOUTHBAG_INJECT_LANE=ci1" >>"$GITHUB_ENV"
+
       - name: Build the ISO
-        run: ./image/build.sh
+        # bash invocation, not ./: file modes are not guaranteed to
+        # survive publication through the web UI.
+        run: bash image/build.sh
 
       - name: Verify the image
         run: |
@@ -138,5 +171,6 @@ jobs:
           name: southbag-os-iso
           path: |
             out/southbag-os.iso
+            out/southbag-inject_*_source.tar.gz
             serial.log
           if-no-files-found: error

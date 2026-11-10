@@ -1,0 +1,25 @@
+[Unit]
+Description=Southbag input broker bounded stop-only request
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/local/bin/southbag-input-client --serve
+StandardInput=socket
+StandardOutput=null
+StandardError=journal
+RuntimeMaxSec=45
+TimeoutStopSec=2
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/run/southbag-input-broker

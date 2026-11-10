@@ -18,7 +18,8 @@ export interface AppWindow {
 }
 
 export interface AppContext {
-  customer: Customer;
+  /** Null in a standalone app window that loaded before the shell signed in. */
+  customer: Customer | null;
   window: AppWindow;
 }
 
@@ -27,6 +28,11 @@ export interface AppManifest {
   name: string;
   size: { width: number; height: number };
   min: { width: number; height: number };
+  /**
+   * The service this app opens, when the app is a website. Services always
+   * open top-level through the Browser web app — nothing is framed.
+   */
+  url?: string;
   /**
    * Absent for an app that has not been built yet. The shell shows a
    * placeholder; the app itself is unaware there was ever a difference.

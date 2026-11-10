@@ -43,6 +43,92 @@ Raising a number is a tracked diff; say why in the commit message.
 - Performance is measured on a throttled CPU and a capped memory profile, not
   on the development machine.
 
+## Signing in
+
+The shell does not open without a signed-in Southbag account. Sign-in is
+OpenID Connect against Southbag Identity (identity.southbag.cc):
+authorization code + PKCE, no client secret — a device cannot keep one, so
+the shell is a public client. Each deployment registers itself once through
+Identity's dynamic client registration and remembers its client id.
+
+The id token's signature is verified against Identity's published keys before
+anyone is called a customer; `state`, `nonce`, issuer, audience and expiry
+are all checked. The session lives in `localStorage` until the token expires,
+and signing out forgets it — a secretless client cannot revoke, so it forgets.
+
+On the device the shell is served from `http://127.0.0.1:8080`, an origin
+Identity does not CORS-trust, so registration, the code exchange and the key
+fetch go through `image/shell-extra/cgi-bin/identity-auth`, which forwards
+exactly those three calls and nothing else. The authorize redirect itself is
+a top-level navigation and needs no help.
+
+`?identity=<origin>` runs the flow against another Identity instance (used to
+test against a local one); `?identity=reset` clears the override.
+
+## Storage
+
+Files is Southbag Drive (drive.southbag.cc), and it is the only storage
+in the customer journey: the system offers no local place to put files,
+and downloads do not work.
+
+That is a journey constraint, not an immutable system. Nothing locks the
+filesystem down; Drive is simply the only thing that works:
+
+* The image's runtime is cog, and cog has no download support: following
+  a download link ends in a load error, so nothing reaches the disk that
+  way. (The cog 0.18.4 that Debian trixie ships has no download handling
+  in its source at all.)
+* When the image ships Southbag Browser, the launcher marks it with
+  `SOUTHBAG_OS=1` (`image/shell-extra/cgi-bin/launch`) and the browser
+  refuses downloads under that mark, with a Drive-first explanation
+  (SouthbagHQ/browser). The standalone desktop browser never carries the
+  mark and keeps its download manager.
+* Drive is the exception that proves the rule: uploading into Drive is a
+  web flow inside the Drive window and never touches the local disk,
+  while "downloading" out of Drive hits the same refusal as everything
+  else. Files stay in Drive.
+
+Off the device - the shell opened in an ordinary desktop browser - none
+of this applies: that browser belongs to the host, and downloads there
+are the host's business. Someone with the boot prompt and physical
+access can still do anything; that was never the threat this answers.
+
+## Apps
+
+Most apps are the institution's existing web services, opened live at their
+own origins rather than re-implemented here. Nothing is framed: a service
+always opens as a top-level window. Off the device that is a new browser
+window. On the device (image/shell-extra/cgi-bin/launch) the window belongs
+to whichever runtime the image ships:
+
+* **Southbag Browser installed**: each service opens as one of its app
+  windows (`southbag-browser --app=<url>`) — a real top-level window with
+  no tab strip or omnibox, on the full browser stack: the same Southbag
+  Identity login as the shell, single sign-on into every southbag.cc
+  service, Southbag Secure, browsing fees and Rewards. The Browser app
+  launches the whole browser; opening a service that is already open
+  focuses its window.
+* **Otherwise**: the session starts a cog process per app pointing at the
+  shell's Browser web app (src/apps/Browser.svelte) — a window with a
+  location bar that becomes the site it visits.
+
+| App | Opens |
+| --- | --- |
+| Files | drive.southbag.cc |
+| Banking | banking.southbag.cc |
+| Office | office.southbag.cc |
+| Chat | social.southbag.cc |
+| Code | code.southbag.cc |
+| Branch locator | branch-locator.southbag.cc |
+| Lore | lore.southbag.cc |
+| Browser | the Southbag Browser web app itself |
+
+Terminal, Kevin and Settings have no web service and stay placeholders until
+they are built. The standalone Southbag Browser and Terminal products are
+Electron desktop applications (SouthbagHQ/browser, SouthbagHQ/terminal);
+images that include the browser get the app-window behaviour above, images
+without it keep the cog path — the OS works either way.
+
 ## Structure
 
 The shell is four surfaces, composed in `src/Desktop.svelte` and nowhere else.

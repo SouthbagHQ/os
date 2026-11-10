@@ -1,0 +1,88 @@
+--- a/platform/wayland/cog-platform-wl.c
++++ b/platform/wayland/cog-platform-wl.c
+@@ -1627,8 +1627,9 @@
+         wpe_view_data.frame_callback = NULL;
+     }
+ 
+-    wpe_view_backend_exportable_fdo_dispatch_frame_complete
+-        (wpe_host_data.exportable);
++    if (wpe_host_data.exportable != NULL)
++        wpe_view_backend_exportable_fdo_dispatch_frame_complete
++            (wpe_host_data.exportable);
+ }
+ 
+ static const struct wl_callback_listener frame_listener = {
+@@ -1683,8 +1684,9 @@
+ on_buffer_release (void* data, struct wl_buffer* buffer)
+ {
+     struct wpe_fdo_egl_exported_image * image = data;
+-    wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image (wpe_host_data.exportable,
+-                                                                         image);
++    if (wpe_host_data.exportable != NULL)
++        wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image (wpe_host_data.exportable,
++                                                                             image);
+     g_clear_pointer (&buffer, wl_buffer_destroy);
+ }
+ 
+@@ -1823,7 +1825,7 @@
+ static void
+ shm_buffer_destroy(struct shm_buffer *buffer)
+ {
+-    if (buffer->exported_buffer) {
++    if (buffer->exported_buffer && wpe_host_data.exportable != NULL) {
+         wpe_view_backend_exportable_fdo_egl_dispatch_release_shm_exported_buffer(wpe_host_data.exportable,
+                                                                                  buffer->exported_buffer);
+     }
+@@ -1849,8 +1851,9 @@
+ {
+     struct shm_buffer *buffer = data;
+     if (buffer->exported_buffer) {
+-        wpe_view_backend_exportable_fdo_egl_dispatch_release_shm_exported_buffer (wpe_host_data.exportable,
+-                                                                                  buffer->exported_buffer);
++        if (wpe_host_data.exportable != NULL)
++            wpe_view_backend_exportable_fdo_egl_dispatch_release_shm_exported_buffer (wpe_host_data.exportable,
++                                                                                      buffer->exported_buffer);
+         buffer->exported_buffer = NULL;
+     }
+ }
+@@ -2597,7 +2600,7 @@
+     /* free WPE view data */
+     if (wpe_view_data.frame_callback != NULL)
+         wl_callback_destroy(wpe_view_data.frame_callback);
+-    if (wpe_view_data.image != NULL) {
++    if (wpe_view_data.image != NULL && wpe_host_data.exportable != NULL) {
+         wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(wpe_host_data.exportable,
+                                                                             wpe_view_data.image);
+     }
+@@ -2623,6 +2626,22 @@
+     G_OBJECT_CLASS(cog_wl_platform_parent_class)->finalize(object);
+ }
+ 
++/* The WebKitWebViewBackend owns the exportable through this destroy notify
++ * and tears it down when the web view goes away; the WebKit-side client
++ * bundle dies with it. Clear the platform-global reference first, so that
++ * no buffer or image release dispatched later during platform teardown
++ * (clear_buffers() in cog_wl_platform_finalize(), compositor buffer
++ * releases, frame callbacks) can dereference the dead client bundle: its
++ * heap pages may already be unmapped, which manifested as a SIGSEGV in
++ * ClientBundleEGL::releaseShmBuffer on every plain process termination. */
++static void
++on_wk_view_backend_destroyed(gpointer data)
++{
++    g_assert(data == wpe_host_data.exportable);
++    wpe_host_data.exportable = NULL;
++    wpe_view_backend_exportable_fdo_destroy(data);
++}
++
+ static WebKitWebViewBackend *
+ cog_wl_platform_get_view_backend(CogPlatform *platform, WebKitWebView *related_view, GError **error)
+ {
+@@ -2646,7 +2665,7 @@
+ 
+     WebKitWebViewBackend *wk_view_backend =
+         webkit_web_view_backend_new(wpe_view_data.backend,
+-                                    (GDestroyNotify) wpe_view_backend_exportable_fdo_destroy,
++                                    (GDestroyNotify) on_wk_view_backend_destroyed,
+                                     wpe_host_data.exportable);
+     g_assert(wk_view_backend);
+ 
