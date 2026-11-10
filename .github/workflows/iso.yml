@@ -180,8 +180,20 @@ jobs:
           # labwc is up and cog is running. Anything less is a broken image.
           grep -o "SOUTHBAG-OS-[A-Z-]*" serial.log | sort -u || true
 
+          # A transient ready marker is not a healthy boot. The full smoke
+          # window above must also stay free of renderer/kernel crashes and
+          # compositor restarts, or a reboot loop can look like success.
+          if grep -Eq 'segfault at|general protection fault|Kernel panic|Oops:' serial.log; then
+            echo '::error::Runtime crash detected after boot; refusing release readiness.'
+            exit 1
+          fi
+          starts=$(grep -c 'SOUTHBAG-OS-SESSION-START' serial.log || true)
+          if [ "$starts" -ne 1 ]; then
+            echo '::error::Expected one stable compositor session during smoke.'
+            exit 1
+          fi
           if grep -q "SOUTHBAG-OS-READY" serial.log; then
-            echo "Booted to a running shell."
+            echo "Booted to a running shell without observed runtime crashes."
             echo "ready=true" >>"$GITHUB_OUTPUT"
           else
             echo "::error::ISO did not reach a running shell. See serial.log."
