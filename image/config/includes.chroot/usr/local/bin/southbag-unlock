@@ -113,6 +113,7 @@ if [ -n "$cookie" ] && printf '%s' "$input" | grep -qE '^[0-9]{6}$'; then
  if post /two-factor/verify-totp && answered_for_us; then
   record_faceid
   rm -f "$jar" "$state/locked"
+  /usr/local/bin/southbag-analytics unlock_succeeded >/dev/null 2>&1 || true
   exit 0
  fi
  # A wrong code falls through and is also tried as a password below.
@@ -125,6 +126,7 @@ printf '%s' "$input" | jq -Rs --arg email "$email" \
 if post /sign-in/email && answered_for_us; then
  record_faceid
  rm -f "$jar" "$state/locked"
+  /usr/local/bin/southbag-analytics unlock_succeeded >/dev/null 2>&1 || true
  exit 0
 fi
 # Identity accepted the password but wants a second factor: keep the
@@ -132,4 +134,5 @@ fi
 if jq -e '.twoFactorRedirect == true' "$resp" >/dev/null 2>&1; then
  save_challenge_cookie
 fi
+/usr/local/bin/southbag-analytics unlock_refused >/dev/null 2>&1 || true
 exit 1
