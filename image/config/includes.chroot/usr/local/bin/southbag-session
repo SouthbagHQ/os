@@ -1,15 +1,53 @@
 #!/bin/sh
-# The session.
-#
-# Started from the login shell on tty1, not a systemd user unit: the
-# compositor needs the seat and DRM master that come with the logind session,
-# and the user manager is not attached to it.
+# The login-shell seat is retained by the compositor. Its startup services
+# have a separate tracked scope so httpd/supervisors cannot outlive the seat.
 set -eu
+SYSTEMCTL=${SOUTHBAG_SESSION_SYSTEMCTL:-systemctl}
+MANAGER=${SOUTHBAG_SESSION_MANAGER:-/usr/local/bin/southbag-device-session}
+COMPOSITOR=${SOUTHBAG_SESSION_COMPOSITOR:-/usr/bin/labwc}
+CGROUP_ROOT=${SOUTHBAG_DEVICE_CGROUP_ROOT:-/sys/fs/cgroup}
+DEADLINE=${SOUTHBAG_SESSION_DEADLINE:-20}
+services=southbag-compositor-services.scope
+state=${SOUTHBAG_STATE_DIR:-"$HOME/.local/share/southbag"}
+mkdir -p "$state/device-session"
 
-# Says the autologin worked and we got this far. Without it, a compositor that
-# never starts is indistinguishable from a login that never happened.
-echo "SOUTHBAG-OS-SESSION-START" > /dev/console 2>/dev/null || true
+cleanup() {
+ # Stop the shell supervisor before taking the manager lock: otherwise its
+ # retry loop can race cleanup or hold the very lock cleanup needs.
+ touch "$state/device-session/compositor-stale"
+ units=$(timeout "$DEADLINE" "$SYSTEMCTL" --user list-units --all --type=scope --no-legend) || return 1
+ cg=
+ if printf '%s\n' "$units" | awk '{print $1}' | grep -qx "$services"; then
+  cg=$(timeout "$DEADLINE" "$SYSTEMCTL" --user show "$services" --property=ControlGroup --value) || return 1
+ fi
+ if timeout "$DEADLINE" "$SYSTEMCTL" --user is-active --quiet "$services"; then
+  timeout "$DEADLINE" "$SYSTEMCTL" --user stop "$services" || return 1
+ fi
+ if timeout "$DEADLINE" "$SYSTEMCTL" --user is-active --quiet "$services"; then return 1; fi
+ if [ -n "$cg" ] && [ -r "$CGROUP_ROOT$cg/cgroup.events" ]; then
+  ! grep -q '^populated 1$' "$CGROUP_ROOT$cg/cgroup.events" || return 1
+ fi
+ timeout "$DEADLINE" "$MANAGER" quiesce
+}
 
-# labwc's own diagnosis, kept where the readiness check can find it.
-exec /usr/bin/labwc -s /usr/local/bin/southbag-shell \
-  >"$HOME/session.log" 2>&1
+# Also runs after an uncatchable kill or power loss: never start over a
+# surviving old supervisor, server, scope, or private-profile writer.
+cleanup || { echo 'session: preflight cleanup refused' >&2; exit 1; }
+echo 'SOUTHBAG-OS-SESSION-START' >/dev/console 2>/dev/null || true
+"$COMPOSITOR" -C /etc/labwc -s 'systemd-run --user --scope --collect --unit=southbag-compositor-services --property=KillMode=control-group /usr/local/bin/southbag-shell' >"$HOME/session.log" 2>&1 &
+pid=$!
+finish() {
+ trap - EXIT HUP INT TERM
+ kill -TERM "$pid" 2>/dev/null || true
+ # Do not hang on a stuck compositor. A live one keeps this session stale.
+ n=0
+ while kill -0 "$pid" 2>/dev/null; do
+  n=$((n+1)); [ "$n" -lt "$DEADLINE" ] || { kill -KILL "$pid" 2>/dev/null || true; break; }
+  sleep 1
+ done
+ wait "$pid" 2>/dev/null || true
+ cleanup || { echo 'session: exit cleanup refused' >&2; exit 1; }
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+wait "$pid" || exit 1
