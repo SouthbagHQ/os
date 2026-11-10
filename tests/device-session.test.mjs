@@ -370,3 +370,49 @@ test('non-writable leftover note is replaced without prompting',()=>{
   assert.equal(readFileSync(join(root,'shell.unit'),'utf8'),'southbag-device-shell.scope\n');
  }finally{rmSync(base,{recursive:true,force:true})}
 });
+
+test('compositor quiesce stops windows but keeps account, generation, profiles and lock',()=>{
+ const {base,state,root,call}=setup();
+ try{
+  seedAccount(root,state);
+  mkdirSync(join(root,'browser')); writeFileSync(join(root,'browser','cookie'),'keep');
+  writeFileSync(join(state,'locked'),''); writeFileSync(join(state,'nav-state'),'old');
+  assert.equal(call('launch','browser','sleep','30').status,0);
+  assert.equal(call('quiesce').status,0);
+  assert.equal(readFileSync(join(state,'account'),'utf8'),'sub\temail\n');
+  assert.equal(readFileSync(join(root,'generation'),'utf8'),'one');
+  assert.equal(readFileSync(join(root,'browser','cookie'),'utf8'),'keep');
+  assert.equal(existsSync(join(state,'locked')),true);
+  assert.equal(existsSync(join(state,'nav-state')),false);
+  assert.equal(existsSync(join(root,'compositor-stale')),false);
+  assert.equal(readdirSync(root).filter(f=>f.endsWith('.unit')).length,0);
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+test('failed compositor quiesce gates shell and apps, without signing out or wiping',()=>{
+ const {base,state,root,env,call}=setup();
+ try{
+  seedAccount(root,state);
+  mkdirSync(join(root,'browser'));writeFileSync(join(root,'browser','cookie'),'keep');
+  assert.equal(call('launch','browser','sleep','30').status,0);
+  writeFileSync(join(env.FAKE_SYSTEMD_STATE,'hang-stop'),'');
+  assert.notEqual(call('quiesce').status,0);
+  assert.equal(existsSync(join(root,'compositor-stale')),true);
+  assert.equal(existsSync(join(state,'account')),true);
+  assert.equal(readFileSync(join(root,'browser','cookie'),'utf8'),'keep');
+  assert.notEqual(call('shell').status,0);
+  assert.notEqual(call('launch','browser','sleep','1').status,0);
+ }finally{rmSync(join(env.FAKE_SYSTEMD_STATE,'hang-stop'),{force:true});call('quiesce');rmSync(base,{recursive:true,force:true})}
+});
+test('quiesce respects a prior blocked reset and refuses escaped profile writers',()=>{
+ const {base,state,root,call}=setup(); let fd;
+ try{
+  seedAccount(root,state);mkdirSync(join(root,'browser'));
+  const file=join(root,'browser','cookie');writeFileSync(file,'keep');fd=openSync(file,'r');
+  assert.notEqual(call('quiesce').status,0);
+  assert.equal(existsSync(join(root,'compositor-stale')),true);
+  closeSync(fd);fd=undefined;writeFileSync(join(root,'blocked'),'');
+  assert.equal(call('quiesce').status,0);
+  assert.equal(existsSync(join(root,'blocked')),true);
+  assert.notEqual(call('shell').status,0);
+ }finally{if(fd!==undefined)closeSync(fd);rmSync(base,{recursive:true,force:true})}
+});
