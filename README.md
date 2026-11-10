@@ -65,6 +65,34 @@ a top-level navigation and needs no help.
 `?identity=<origin>` runs the flow against another Identity instance (used to
 test against a local one); `?identity=reset` clears the override.
 
+## Storage
+
+Files is Southbag Drive (drive.southbag.cc), and it is the only storage
+in the customer journey: the system offers no local place to put files,
+and downloads do not work.
+
+That is a journey constraint, not an immutable system. Nothing locks the
+filesystem down; Drive is simply the only thing that works:
+
+* The image's runtime is cog, and cog has no download support: following
+  a download link ends in a load error, so nothing reaches the disk that
+  way. (The cog 0.18.4 that Debian trixie ships has no download handling
+  in its source at all.)
+* When the image ships Southbag Browser, the launcher marks it with
+  `SOUTHBAG_OS=1` (`image/shell-extra/cgi-bin/launch`) and the browser
+  refuses downloads under that mark, with a Drive-first explanation
+  (SouthbagHQ/browser). The standalone desktop browser never carries the
+  mark and keeps its download manager.
+* Drive is the exception that proves the rule: uploading into Drive is a
+  web flow inside the Drive window and never touches the local disk,
+  while "downloading" out of Drive hits the same refusal as everything
+  else. Files stay in Drive.
+
+Off the device - the shell opened in an ordinary desktop browser - none
+of this applies: that browser belongs to the host, and downloads there
+are the host's business. Someone with the boot prompt and physical
+access can still do anything; that was never the threat this answers.
+
 ## Apps
 
 Most apps are the institution's existing web services, opened live at their

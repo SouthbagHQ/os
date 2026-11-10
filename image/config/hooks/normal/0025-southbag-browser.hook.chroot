@@ -36,6 +36,6 @@ rm -f "/tmp/$deb" SHA256SUMS.txt
 # labwc is Wayland-only and the image has no XWayland: go through ozone.
 cat > /usr/local/bin/southbag-browser <<'WRAP'
 #!/bin/sh
-exec /usr/bin/southbag-browser --ozone-platform-hint=auto "$@"
+exec /usr/bin/southbag-browser --ozone-platform=wayland "$@"
 WRAP
 chmod +x /usr/local/bin/southbag-browser
