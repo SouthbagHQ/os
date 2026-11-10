@@ -21,7 +21,17 @@ wait_for() {
 
 assets_up() { busybox wget -T 3 -q -O /dev/null http://127.0.0.1:8080/index.html; }
 compositor_up() { busybox pidof labwc >/dev/null 2>&1; }
-shell_up() { busybox pidof cog >/dev/null 2>&1; }
+# Service windows also run cog. Only the shell's exact app id identifies
+# the desktop: opening or closing an app must not look like a shell restart.
+shell_pids() {
+  for pid in $(busybox pidof cog); do
+    if tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null |
+       grep -qx -- '--gapplication-app-id=cc.southbag.shell'; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+shell_up() { [ -n "$(shell_pids)" ]; }
 
 # The asset server now starts inside the session rather than as a system
 # service, so it comes up after the compositor rather than before it.
@@ -56,7 +66,7 @@ fi
 # This runs as the system readiness service, unlike the customer's session
 # script, so console markers are writable and visible to the boot verifier.
 compositor=$(busybox pidof labwc)
-shell=$(busybox pidof cog)
+shell=$(shell_pids)
 [ -n "$compositor" ] && [ -n "$shell" ] || {
   echo 'SOUTHBAG-OS-UNSTABLE' > /dev/console
   exit 1
@@ -65,7 +75,7 @@ i=0
 while :; do
   sleep 1
   if [ "$(busybox pidof labwc)" != "$compositor" ] ||
-     [ "$(busybox pidof cog)" != "$shell" ] || ! assets_up; then
+     [ "$(shell_pids)" != "$shell" ] || ! assets_up; then
     echo 'SOUTHBAG-OS-UNSTABLE' > /dev/console
     exit 1
   fi
