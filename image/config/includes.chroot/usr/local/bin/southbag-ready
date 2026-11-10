@@ -19,7 +19,7 @@ wait_for() {
   return 1
 }
 
-assets_up() { busybox wget -q -O /dev/null http://127.0.0.1:8080/index.html; }
+assets_up() { busybox wget -T 3 -q -O /dev/null http://127.0.0.1:8080/index.html; }
 compositor_up() { busybox pidof labwc >/dev/null 2>&1; }
 shell_up() { busybox pidof cog >/dev/null 2>&1; }
 
@@ -50,3 +50,27 @@ else
   echo "SOUTHBAG-OS-SHELL-FAILED" > /dev/console
   exit 1
 fi
+
+# An early process marker is not sustained runtime health. Require the same
+# compositor and shell and working assets for a minute, then keep watching.
+# This runs as the system readiness service, unlike the customer's session
+# script, so console markers are writable and visible to the boot verifier.
+compositor=$(busybox pidof labwc)
+shell=$(busybox pidof cog)
+[ -n "$compositor" ] && [ -n "$shell" ] || {
+  echo 'SOUTHBAG-OS-UNSTABLE' > /dev/console
+  exit 1
+}
+i=0
+while :; do
+  sleep 1
+  if [ "$(busybox pidof labwc)" != "$compositor" ] ||
+     [ "$(busybox pidof cog)" != "$shell" ] || ! assets_up; then
+    echo 'SOUTHBAG-OS-UNSTABLE' > /dev/console
+    exit 1
+  fi
+  i=$((i + 1))
+  if [ "$i" -eq 60 ]; then
+    echo 'SOUTHBAG-OS-STABLE' > /dev/console
+  fi
+done
