@@ -46,6 +46,7 @@ gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1
 
 mkdir -p "$state"
 : > "$state/locked"
+/usr/local/bin/southbag-analytics lock_engaged >/dev/null 2>&1 || true
 
 # The native client (password + face in one lock surface) replaces swaylock
 # only when deliberately enabled with the /etc/southbag-lockd marker. Until
