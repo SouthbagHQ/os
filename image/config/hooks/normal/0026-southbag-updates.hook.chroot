@@ -1,30 +1,47 @@
 #!/bin/sh
-# Stages the Southbag update channel when - and only when - its archive
-# keyring is present in the image. Before that one-time setup (see
-# docs/updates.md) the sources entry comes out, so no device ever points
-# apt at a repo it cannot authenticate (which would make every apt
-# transaction fail). Note what is NOT staged: the image always installs
-# unattended-upgrades and the 51southbag-updates config, so Debian
-# security auto-updates and the 03:30 reboot window are active from first
-# boot, keyring or not - that half of the rollout needs no signing setup.
+# Build-time apt never sees the unpublished Southbag channel. Install its
+# signed source before the apt timers at boot, not in a chroot hook: live-build
+# refreshes apt again after ALL chroot hooks have finished.
 set -eu
 
 keyring=/usr/share/keyrings/southbag-archive-keyring.gpg
 sources=/etc/apt/sources.list.d/southbag.sources
+staged=/usr/share/southbag-updates/southbag.sources
+unit=/etc/systemd/system/southbag-updates-channel.service
 
-# Undo hook 0009's build-time mask before deciding the final state.
 if [ -f /root/.southbag.sources.buildmask ]; then
-  mv /root/.southbag.sources.buildmask "$sources"
+  mkdir -p /usr/share/southbag-updates
+  mv /root/.southbag.sources.buildmask "$staged"
+fi
+# Also cover direct hook qualification outside the complete hook sequence.
+if [ -f "$sources" ]; then
+  mkdir -p /usr/share/southbag-updates
+  mv "$sources" "$staged"
 fi
 
 if [ ! -s "$keyring" ]; then
-  echo "southbag-updates: no archive keyring in the image config; building"
-  echo "southbag-updates: WITHOUT the Southbag channel (activation pending,"
-  echo "southbag-updates: see docs/updates.md). Debian security updates stay on."
-  rm -f "$sources"
+  echo 'southbag-updates: no archive keyring; Debian updates only.'
+  rm -f "$staged" "$unit"
 else
-  echo "southbag-updates: archive keyring present, Southbag channel enabled."
-fi
+  test -s "$staged"
+  cat > "$unit" <<'UNIT'
+[Unit]
+Description=Stage the signed Southbag update channel before apt
+DefaultDependencies=no
+After=local-fs.target
+Before=timers.target apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service
+ConditionPathExists=/usr/share/keyrings/southbag-archive-keyring.gpg
+ConditionPathExists=/usr/share/southbag-updates/southbag.sources
 
-# The daily apt timers are what makes updates automatic.
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/install -m 644 /usr/share/southbag-updates/southbag.sources /etc/apt/sources.list.d/southbag.sources
+RemainAfterExit=yes
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl enable southbag-updates-channel.service
+  echo 'southbag-updates: signed source staged for boot before apt timers.'
+fi
 systemctl enable apt-daily.timer apt-daily-upgrade.timer
