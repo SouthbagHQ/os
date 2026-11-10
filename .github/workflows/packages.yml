@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build:device
@@ -28,7 +30,7 @@ jobs:
           mkdir -p out/pool
           # bash invocation, not ./: file modes are not
           # guaranteed to survive publication.
-          bash packaging/build-shell-deb.sh "0.1.0+${GITHUB_SHA:0:7}" dist-device out/pool
+          bash packaging/build-shell-deb.sh "$(bash packaging/package-version.sh)" dist-device out/pool
           bash packaging/fetch-browser-deb.sh "$SOUTHBAG_BROWSER_VERSION" out/pool
           ls -la out/pool
 
@@ -70,6 +72,8 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       # The lockd sources are in this tree (the combined base carries
       # them). Fail closed if any required path is missing - never fetch
@@ -106,7 +110,7 @@ jobs:
             libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev
 
       - name: Build lockd package
-        run: bash packaging/build-lockd-deb.sh "0.1.0+${GITHUB_SHA:0:7}" out/pool
+        run: bash packaging/build-lockd-deb.sh "$(bash packaging/package-version.sh)" out/pool
 
       - name: Validate package and target linkage
         run: |
