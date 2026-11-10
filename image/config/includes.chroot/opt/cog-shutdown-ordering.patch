@@ -86,4 +86,3 @@
                                      wpe_host_data.exportable);
      g_assert(wk_view_backend);
  
-
