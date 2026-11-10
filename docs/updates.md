@@ -38,7 +38,7 @@ The channel is inert until a one-time signing setup happens:
 
 - Hook `0026-southbag-updates.hook.chroot` checks for the keyring at image
   build time. **Absent:** the sources entry is removed and main's CI cannot
-  break over the channel. **Present:** the channel is enabled. Only the
+  break over the channel. **Present:** the source is staged and a root-owned boot unit installs it before the apt timers. Only the
   Southbag channel is staged: every image - keyed or not - installs
   `unattended-upgrades` and the `51southbag-updates` config, so Debian
   security auto-updates and the 03:30 auto-restart window are active from
@@ -206,3 +206,9 @@ The repo is static files under `dist/apt/` on the existing Pages site:
   test devices.
 - **No downgrade support, no A/B partitions.** Roll forward, re-flash as
   the floor.
+
+The image keeps the signed source staged at
+`/usr/share/southbag-updates/southbag.sources` throughout live-build.
+`southbag-updates-channel.service` copies it to apt before `timers.target`
+on boot, only when the public key exists. This avoids a build-time dependency
+on the public Pages repository, including live-build's final apt refresh.
