@@ -6,6 +6,7 @@ import AppFrame from "./AppFrame.svelte";
 import Login from "./surfaces/login/Login.svelte";
 import { currentSession, logout } from "./platform/identity";
 import { beginLogin, completeLogin } from "./platform/oidc";
+import { startAnalytics, capture } from "./platform/palantir";
 
 const desktop = document.getElementById("desktop");
 if (!desktop) throw new Error("No desktop.");
@@ -31,6 +32,9 @@ async function main() {
   }
   session ??= currentSession();
   if (session) loginError = null;
+  startAnalytics(session?.customer ?? null);
+  if (loginError) capture("os_signin_failed");
+  if (session) capture("os_session_ready");
 
   if (appId) {
     mount(AppFrame, { target, props: { appId, customer: session?.customer ?? null } });
@@ -40,7 +44,7 @@ async function main() {
   if (!session) {
     mount(Login, {
       target,
-      props: { error: loginError, onsignin: () => void beginLogin() },
+      props: { error: loginError, onsignin: () => { capture("os_signin_begin"); void beginLogin(); } },
     });
     return;
   }
@@ -51,6 +55,7 @@ async function main() {
       customer: session.customer,
       onsignout: async () => {
         try {
+          capture("os_signout_begin");
           await logout();
           location.reload();
         } catch {
