@@ -1,6 +1,8 @@
 #!/bin/sh
 # Rebuilds cog 0.18.4 with Southbag's wayland script-dialog support
-# (image/cog-dialogs/0001-wayland-script-dialogs.patch) inside the chroot,
+# (image/cog-dialogs/0001-wayland-script-dialogs.patch) and the
+# shutdown-ordering crash fix (opt/cog-shutdown-ordering.patch, applied
+# after the dialog patch) inside the chroot,
 # then removes the toolchain and sources, following 0016's exact-dpkg-delta
 # purge: the image ships patched binaries, not a compiler.
 #
@@ -45,6 +47,7 @@ echo '31d7079db2eeed790899d2f1f824dd6a54bf30d072d196d737be572f105d99b1  cog-0.18
 tar xf cog-0.18.4.tar.xz
 cd cog-0.18.4
 patch -p1 < /opt/cog-dialog.patch
+patch -p1 < /opt/cog-shutdown-ordering.patch
 
 # The stock wl platform module path, resolved from the installed package.
 modpath=$(dpkg -L cog | grep -m1 'cogplatform-wl\.so$')
@@ -68,8 +71,9 @@ cp build/platform/wayland/libcogplatform-wl.so "$modpath"
 chmod 644 "$modpath"
 
 cd /
-rm -rf /opt/cog-dialog-build /opt/cog-dialog.patch
+rm -rf /opt/cog-dialog-build /opt/cog-dialog.patch /opt/cog-shutdown-ordering.patch
 # Purge exactly what this hook installed, not a guessed package list.
 apt-get purge -y $added
 rm -f /tmp/.pkgs-before /tmp/.pkgs-after
 apt-get clean
+
