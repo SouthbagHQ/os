@@ -78,3 +78,8 @@ test('compositor owns all hardware volume keys, without a page handler or OSD',(
  assert.doesNotMatch(desktop,/AudioVolume|cgi-bin\/volume/);
  assert.doesNotMatch(config,/notify-send|swayosd|wob/);
 });
+
+test('device session explicitly loads the shipped compositor config',()=>{
+ const session=readFileSync(join(here,'..','image','config','includes.chroot','usr','local','bin','southbag-session'),'utf8');
+ assert.match(session,/exec \/usr\/bin\/labwc -C \/etc\/labwc -s/);
+});
