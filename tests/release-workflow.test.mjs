@@ -48,7 +48,7 @@ const readiness=readFileSync(new URL('../image/config/includes.chroot/usr/local/
 test('system readiness proves a minute of unchanged compositor and shell',()=>{
  assert.match(readiness,/while :; do/);assert.match(readiness,/if \[ "\$i" -eq 60 \]/);
  assert.match(readiness,/pidof labwc\)" != "\$compositor"/);
- assert.match(readiness,/pidof cog\)" != "\$shell"/);
+ assert.match(readiness,/shell_pids\)" != "\$shell"/);
  assert.match(readiness,/\|\| ! assets_up/);
  assert.match(readiness,/SOUTHBAG-OS-UNSTABLE/);
  assert.match(readiness,/SOUTHBAG-OS-STABLE/);
