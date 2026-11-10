@@ -42,7 +42,8 @@ cp -R "$here/shell-extra/." "$served/"
 # device runs these as CGI, and git modes survive neither every checkout nor
 # every web flow that can land these files.
 chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth" \
-  "$served/cgi-bin/lock" "$served/cgi-bin/account" "$served/cgi-bin/device-session"
+  "$served/cgi-bin/lock" "$served/cgi-bin/account" "$served/cgi-bin/device-session" \
+  "$served/cgi-bin/volume"
 
 # live-build executes hooks straight from this tree, so every hook's
 # executable bit matters here — set them all, don't trust the checkout.

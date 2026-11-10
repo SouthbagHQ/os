@@ -3,10 +3,11 @@
 set -eu
 
 adduser --disabled-password --gecos "" customer
-# Seat and input access for the compositor. These groups are created by
-# systemd's sysusers, which may not have run yet in the chroot, so a missing
-# group is not a build failure.
-for group in video input render seat; do
+# Seat and input access for the compositor; audio so the session can set
+# the hardware mixer (the volume keys go through /cgi-bin/volume). These
+# groups are created by systemd's sysusers, which may not have run yet in
+# the chroot, so a missing group is not a build failure.
+for group in video input render seat audio; do
   adduser customer "$group" 2>/dev/null || true
 done
 

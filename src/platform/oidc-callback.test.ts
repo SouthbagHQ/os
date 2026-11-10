@@ -60,7 +60,7 @@ async function refuses(pattern?:RegExp) {
 test("state mismatch consumes pending and performs no exchange",async()=>{callback("?code=x&state=wrong");await refuses(/state/);expect(calls).toHaveLength(0);expect(sessionStorage.getItem(PENDING)).toBeNull();});
 test("missing state is rejected before exchange",async()=>{callback("?code=x");await refuses(/state/);expect(calls).toHaveLength(0);});
 test("callback issuer mismatch makes no token request",async()=>{callback("?code=x&state=state-A&iss=https%3A%2F%2Fwrong.invalid");await refuses(/issuer/);expect(calls).toHaveLength(0);});
-test("expired request is rejected before exchange",async()=>{seed({createdAt:Date.now()-600001});await refuses(/long/);expect(calls).toHaveLength(0);});
+test("expired request is rejected before exchange",async()=>{seed({createdAt:Date.now()-3600001});await refuses(/long/);expect(calls).toHaveLength(0);});
 test("future or missing pending timestamp is invalid",async()=>{for(const createdAt of [Date.now()+60000,undefined]){seed({createdAt});await refuses();}expect(calls).toHaveLength(0);});
 test("invalid PKCE verifier never reaches token endpoint",async()=>{for(const verifier of ["short","?".repeat(43),"A".repeat(129),undefined]){seed({verifier});await refuses();}expect(calls).toHaveLength(0);});
 test("issuer rejects wrong PKCE exchange and callback cannot be replayed",async()=>{tokenStatus=400;await refuses(/exchange/);expect(new URLSearchParams(String(calls[0]!.init?.body)).get("code_verifier")).toBe(pending.verifier as string);await refuses(/no sign-in/);expect(calls).toHaveLength(1);});
@@ -79,3 +79,12 @@ test("missing or malformed pending cannot exchange and is consumed",async()=>{se
 test("wrong callback origin binding rejects before exchange",async()=>{seed({redirect:"http://127.0.0.1:9999/"});await refuses(/transaction/);expect(calls).toHaveLength(0);});
 test("signed multiple audience with matching authorized party is accepted",async()=>{claims.aud=["client-A","other"];claims.azp="client-A";expect((await completeLogin())?.customer.sub).toBe("synthetic-subject");});
 test("wrong authorized party and malformed subject are refused",async()=>{claims.azp="other";await refuses(/party/);seed();delete claims.azp;claims.sub={value:"not a subject"};await refuses(/subject/);});
+
+for (const age of [600001, 30 * 60 * 1000, 3599000]) {
+ test(`valid callback after ${age}ms fits the one-hour window`,async()=>{
+  seed({createdAt:Date.now()-age});
+  expect((await completeLogin())?.customer.sub).toBe("synthetic-subject");
+  expect(calls.filter(call=>call.url.endsWith("/oauth2/token"))).toHaveLength(1);
+  expect(sessionStorage.getItem(PENDING)).toBeNull();
+ });
+}
