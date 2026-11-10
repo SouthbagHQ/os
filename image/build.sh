@@ -21,7 +21,7 @@ if [[ -n "${SOUTHBAG_INJECT_DEB:-}" || -n "${SOUTHBAG_INJECT_SOURCE:-}" ]]; then
 else
   bash "$repo/packaging/stage-inject-image.sh"
 fi
-trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb"' EXIT
+trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb"; rm -rf "$here/config/includes.chroot/tmp/southbag-package-build"' EXIT
 
 # Set to a Southbag Browser release tag to include the standalone browser in
 # the image (website apps then open as its app windows; see
@@ -44,6 +44,18 @@ cp -R "$here/shell-extra/." "$served/"
 chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth" \
   "$served/cgi-bin/lock" "$served/cgi-bin/account" "$served/cgi-bin/device-session" \
   "$served/cgi-bin/volume"
+
+# Register image content as installed packages, so unattended-upgrades can
+# actually select later versions (copying loose files is not installation).
+version="$(bash "$repo/packaging/package-version.sh")"
+staging="$here/config/includes.chroot/tmp/southbag-package-build"
+rm -rf "$staging"
+mkdir -p "$staging/packaging" "$staging/image/config" "$staging/pool"
+bash "$repo/packaging/build-shell-deb.sh" "$version" "$repo/dist-device" "$staging/pool"
+cp "$repo/packaging/build-lockd-deb.sh" "$staging/packaging/"
+printf '%s' "$version" > "$staging/version"
+# Inside the chroot, the recipe's source/helper paths resolve to the image.
+ln -s / "$staging/image/config/includes.chroot"
 
 # live-build executes hooks straight from this tree, so every hook's
 # executable bit matters here — set them all, don't trust the checkout.
