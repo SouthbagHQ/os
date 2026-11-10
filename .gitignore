@@ -18,3 +18,5 @@ image/*.files
 image/*.packages
 
 image/config/includes.chroot/tmp/southbag-inject-candidate.deb
+
+image/config/includes.chroot/tmp/southbag-package-build
