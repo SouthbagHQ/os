@@ -25,5 +25,7 @@ if [ -r "$state/account" ]; then id=$(cut -f1 "$state/account" | head -1); fi
 [ -n "$id" ] && [ "${#id}" -lt 256 ] || exit 0
 [ "${#session}" -lt 256 ] || session=
 payload=$(jq -nc --arg key "$key" --arg event "os_$event" --arg id "$id" --arg session "$session" '{api_key:$key,event:$event,distinct_id:$id,properties:({"$lib":"palantir-server",source:"server",southbag_app:"os"} + (if $session == "" then {} else {"$session_id":$session} end))}')
-# Bounded best effort. Analytics failure cannot grant/deny authentication.
-${SOUTHBAG_ANALYTICS_WGET:-/bin/busybox wget} -q -T 2 -O /dev/null --header 'Content-Type: application/json' --post-data "$payload" https://palantir.southbag.cc/capture/ 2>/dev/null || true
+# Bounded best effort. Use PostHog's documented server ingest endpoint for
+# the shared US project; the browser proxy rejects command-line clients.
+# Analytics failure cannot grant/deny authentication.
+${SOUTHBAG_ANALYTICS_WGET:-/bin/busybox wget} -q -T 2 -O /dev/null --header 'Content-Type: application/json' --post-data "$payload" https://us.i.posthog.com/i/v0/e/ 2>/dev/null || true
