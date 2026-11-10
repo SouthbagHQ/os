@@ -189,9 +189,11 @@ The repo is static files under `dist/apt/` on the existing Pages site:
 
 ## Deliberately absent
 
-- **No telemetry.** Static files; apt fetches reveal source IPs to the
-  host, nothing is reported back by the OS. Device-health or usage
-  collection is a separate undecided question; nothing here builds it.
+- **Analytics, always on.** Palantir, the same PostHog wiring every
+  Southbag service runs - no off switch. Scope in
+  [docs/telemetry.md](telemetry.md). The update channel itself reports
+  nothing: apt fetches reveal source IPs to the host, and no version or
+  success report goes back through it.
 - **No per-device channels or staged rollout.** Requested away. If wanted
   later: a second suite (`dists/testing`) plus a different sources file on
   test devices.
