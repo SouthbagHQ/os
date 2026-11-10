@@ -1,0 +1,40 @@
+--- a/platform/wayland/cog-platform-wl.c
++++ b/platform/wayland/cog-platform-wl.c
+@@ -9,6 +9,7 @@
+ #include "../../core/cog.h"
+ 
+ #include <errno.h>
++#include <linux/input-event-codes.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+ #include <wpe/webkit.h>
+@@ -873,6 +874,10 @@
+ {
+     wl_data.event_serial = serial;
+     wl_data.pointer.surface = surface;
++    /* Enter coordinates belong to the new surface. A click can arrive
++     * without any intervening motion (for example over a dialog). */
++    wl_data.pointer.x = wl_fixed_to_int(fixed_x);
++    wl_data.pointer.y = wl_fixed_to_int(fixed_y);
+ 
+ #ifdef COG_USE_WAYLAND_CURSOR
+     if (wl_data.cursor_left_ptr) {
+@@ -933,14 +938,14 @@
+ {
+     wl_data.event_serial = serial;
+ 
+-    /* @FIXME: what is this for?
++    /* Backport Igalia/cog f87b71b: normalize Linux button codes and retain
++     * the released button, so WebKit can pair the press with its release. */
+     if (button >= BTN_MOUSE)
+         button = button - BTN_MOUSE + 1;
+     else
+         button = 0;
+-    */
+-
+-    wl_data.pointer.button = !!state ? button : 0;
++
++    wl_data.pointer.button = button;
+     wl_data.pointer.state = state;
+ 
+     struct wpe_input_pointer_event event = {
