@@ -11,5 +11,5 @@ set -eu
 echo "SOUTHBAG-OS-SESSION-START" > /dev/console 2>/dev/null || true
 
 # labwc's own diagnosis, kept where the readiness check can find it.
-exec /usr/bin/labwc -s /usr/local/bin/southbag-shell \
+exec /usr/bin/labwc -C /etc/labwc -s /usr/local/bin/southbag-shell \
   >"$HOME/session.log" 2>&1
