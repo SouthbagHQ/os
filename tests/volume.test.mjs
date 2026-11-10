@@ -81,5 +81,6 @@ test('compositor owns all hardware volume keys, without a page handler or OSD',(
 
 test('device session explicitly loads the shipped compositor config',()=>{
  const session=readFileSync(join(here,'..','image','config','includes.chroot','usr','local','bin','southbag-session'),'utf8');
- assert.match(session,/exec \/usr\/bin\/labwc -C \/etc\/labwc -s/);
+ assert.match(session,/COMPOSITOR=\$\{SOUTHBAG_SESSION_COMPOSITOR:-\/usr\/bin\/labwc\}/);
+ assert.match(session,/"\$COMPOSITOR" -C \/etc\/labwc -s/);
 });
