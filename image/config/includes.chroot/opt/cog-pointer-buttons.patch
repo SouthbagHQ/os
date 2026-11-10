@@ -8,7 +8,18 @@
  #include <stdbool.h>
  #include <stdint.h>
  #include <wpe/webkit.h>
-@@ -933,14 +934,14 @@
+@@ -873,6 +874,10 @@
+ {
+     wl_data.event_serial = serial;
+     wl_data.pointer.surface = surface;
++    /* Enter coordinates belong to the new surface. A click can arrive
++     * without any intervening motion (for example over a dialog). */
++    wl_data.pointer.x = wl_fixed_to_int(fixed_x);
++    wl_data.pointer.y = wl_fixed_to_int(fixed_y);
+ 
+ #ifdef COG_USE_WAYLAND_CURSOR
+     if (wl_data.cursor_left_ptr) {
+@@ -933,14 +938,14 @@
  {
      wl_data.event_serial = serial;
  
