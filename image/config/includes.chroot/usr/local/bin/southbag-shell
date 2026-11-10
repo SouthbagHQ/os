@@ -9,7 +9,10 @@ set -eu
 # Serves the shell, and the launcher endpoint under /cgi-bin. Loopback only.
 # http rather than file:// because WebKit treats file:// as an opaque origin
 # and fonts and fetches fail there.
-/bin/busybox httpd -p 127.0.0.1:8080 -h /usr/share/southbag-shell
+/bin/busybox httpd -f -p 127.0.0.1:8080 -h /usr/share/southbag-shell &
+httpd=$!
+trap 'kill "$httpd" 2>/dev/null || true' EXIT
+trap 'exit 1' HUP INT TERM
 
 # If the previous session or boot ended while locked (compositor crash;
 # SAK is disabled image-wide), come back locked - never back to an exposed
@@ -26,6 +29,7 @@ fi
 # bounded reset); there is no automatic unblock without verified cleanup.
 root="$HOME/.local/share/southbag/device-session"
 while :; do
+ kill -0 "$httpd" 2>/dev/null || exit 1
  if [ -e "$root/blocked" ]; then
   /usr/local/bin/southbag-device-session recovery || { sleep 1; continue; }
   if [ -f "$root/recovery.unit" ]; then
