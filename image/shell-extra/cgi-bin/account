@@ -98,6 +98,7 @@ current=$([ -f "$root/generation" ] && cat "$root/generation" || true)
 { [ -n "$posted" ] && [ -n "$current" ] && [ "$posted" = "$current" ]; } || fail 409 "retired era"
 
 if printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
+ /usr/local/bin/southbag-analytics account_cleared >/dev/null 2>&1 || true
  rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
  "$navbin" account_cleared || true
  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":false}'
@@ -106,4 +107,5 @@ fi
 
 ( umask 077; printf '%s\t%s\n' "$sub" "$email" > "$state/account" )
 "$navbin" account_bound || true
+/usr/local/bin/southbag-analytics account_bound >/dev/null 2>&1 || true
 printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":true}'
