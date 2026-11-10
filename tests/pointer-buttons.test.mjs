@@ -36,3 +36,13 @@ test('image applies pointer backport after existing patches and cleans its sourc
  assert.match(hook,/rm -rf[^\n]*\/opt\/cog-pointer-buttons\.patch/);
  assert.match(hook,/apt-get purge -y \$added/);
 });
+
+// Entering a popup can be followed immediately by a click, with no motion.
+test('surface entry updates the pointer position before any click',()=>{
+ const added=patch.split('\n').filter(l=>l.startsWith('+')&&!l.startsWith('+++')).map(l=>l.slice(1)).join('\n');
+ assert.match(added,/wl_data\.pointer\.x = wl_fixed_to_int\(fixed_x\);/);
+ assert.match(added,/wl_data\.pointer\.y = wl_fixed_to_int\(fixed_y\);/);
+ // The patch context may not retain the function name. Check entry's unique
+ // surface assignment directly instead, so a motion-only update cannot pass.
+ assert.match(patch,/wl_data\.pointer\.surface = surface;[\s\S]*?\+    wl_data\.pointer\.x = wl_fixed_to_int\(fixed_x\);[\s\S]*?\+    wl_data\.pointer\.y = wl_fixed_to_int\(fixed_y\);/);
+});
