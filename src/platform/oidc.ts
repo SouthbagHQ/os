@@ -29,7 +29,9 @@ const DEFAULT_ISSUER = "https://identity.southbag.cc";
 const ISSUER_KEY = "southbag.identity.issuer";
 const CLIENT_KEY = "southbag.identity.client";
 const PENDING_KEY = "southbag.identity.pending";
-const PENDING_TTL_MS = 10 * 60 * 1000;
+// Match Identity's 3600-second authorization-code lifetime. The deliberate
+// consent dialogs and slow devices must fit inside the same bounded window.
+const PENDING_TTL_MS = 60 * 60 * 1000;
 
 export const SCOPES = "openid profile email";
 
