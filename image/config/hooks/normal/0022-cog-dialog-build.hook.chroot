@@ -76,4 +76,3 @@ rm -rf /opt/cog-dialog-build /opt/cog-dialog.patch /opt/cog-shutdown-ordering.pa
 apt-get purge -y $added
 rm -f /tmp/.pkgs-before /tmp/.pkgs-after
 apt-get clean
-
