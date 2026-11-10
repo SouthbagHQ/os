@@ -1,0 +1,52 @@
+#!/bin/sh
+# Adjusts the session volume. There is deliberately no way to read it back
+# and nothing on screen: the customer asked for volume keys that just adjust
+# the volume, with no control or indicator anywhere in the shell.
+#
+# The shell is a web page and cannot run amixer, so - like /cgi-bin/lock -
+# this is the seam. Same rules as the other CGIs:
+#
+# * POST only. A GET changes nothing and hears 405.
+# * Origin must be exactly the shell's own (http://127.0.0.1:8080). Service
+#   sites open in app windows are other origins and cannot move the volume;
+#   browsers set Origin on POST and a site cannot spoof it.
+# * The action is one of three fixed words (?up, ?down, ?mute) carried in
+#   the query string, matched exactly - nothing the caller types becomes a
+#   mixer control name or a value.
+#
+# ALSA, not a sound server: the image has no PipeWire or PulseAudio, and the
+# hardware mixer is always there to be set. amixer failure fails closed as
+# a 500 - the key did nothing, and nothing pretends otherwise.
+#
+# SOUTHBAG_AMIXER exists for the mock-contract test (tests/volume.test.mjs);
+# the device never sets it.
+set -eu
+
+if [ "${REQUEST_METHOD:-GET}" != "POST" ]; then
+ printf 'Status: 405\r\nContent-Type: text/plain\r\n\r\nPOST only\r\n'
+ exit 0
+fi
+
+if [ "${HTTP_ORIGIN:-}" != "http://127.0.0.1:8080" ]; then
+ printf 'Status: 403\r\nContent-Type: text/plain\r\n\r\nshell only\r\n'
+ exit 0
+fi
+
+case "${QUERY_STRING:-}" in
+ up) args='set Master 5%+' ;;
+ down) args='set Master 5%-' ;;
+ mute) args='set Master toggle' ;;
+ *)
+  printf 'Status: 400\r\nContent-Type: text/plain\r\n\r\nunknown action\r\n'
+  exit 0 ;;
+esac
+
+amixer_bin=${SOUTHBAG_AMIXER:-amixer}
+
+# Word-splitting of the fixed strings above is intended; no caller input.
+if ! $amixer_bin -q $args >/dev/null 2>&1; then
+ printf 'Status: 500\r\nContent-Type: text/plain\r\n\r\nmixer refused\r\n'
+ exit 0
+fi
+
+printf 'Status: 204\r\nCache-Control: no-store\r\n\r\n'

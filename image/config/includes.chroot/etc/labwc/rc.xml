@@ -35,9 +35,18 @@
   </windowRules>
 
   <keyboard>
-    <!--
-      No compositor keybindings. Every shortcut belongs to the shell, so that
-      the browser build and the device agree on what the keyboard does.
-    -->
+    <!-- Hardware volume keys belong to the compositor, not a web page:
+         they must keep working with any service or browser window focused.
+         Fixed mixer commands run as customer (audio group), with no OSD.
+         Other shortcuts remain owned by the shell. -->
+    <keybind key="XF86AudioRaiseVolume">
+      <action name="Execute" command="amixer -q set Master 5%+" />
+    </keybind>
+    <keybind key="XF86AudioLowerVolume">
+      <action name="Execute" command="amixer -q set Master 5%-" />
+    </keybind>
+    <keybind key="XF86AudioMute">
+      <action name="Execute" command="amixer -q set Master toggle" />
+    </keybind>
   </keyboard>
 </labwc_config>
