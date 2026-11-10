@@ -38,7 +38,7 @@ stop_unit() {
  unit=$1
  cg=$(unit_cg "$unit")
  if unit_active "$unit"; then
-  "$SYSTEMCTL" --user stop "$unit" >/dev/null 2>&1 &
+  timeout "$STOP_DEADLINE" "$SYSTEMCTL" --user stop "$unit" >/dev/null 2>&1 &
   stopper=$!
   n=0
   while unit_active "$unit"; do
@@ -157,7 +157,7 @@ escaped_writers() {
 
 case "${1:-}" in
  shell)
-  [ ! -e "$root/blocked" ] || exit 1
+  [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] || exit 1
   mkdir -p "$root/wpe-data" "$root/wpe-cache" "$root/browser"
   if [ ! -f "$root/generation" ]; then
    cat /proc/sys/kernel/random/uuid >"$root/.generation.tmp" && sync -f "$root/.generation.tmp" 2>/dev/null
@@ -171,7 +171,7 @@ case "${1:-}" in
   start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --bg-color='#050608' http://127.0.0.1:8080/
   ;;
  launch)
-  [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ -f "$root/generation" ] || exit 1
+  [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] && [ -f "$root/generation" ] || exit 1
   name=$2; shift 2
   case "$name" in browser|files|banking|office|chat|code|branches|lore|terminal|kevin|settings) ;; *) exit 1 ;; esac
   start_scope "app-$name-$$" env SOUTHBAG_DEVICE_GENERATION="$(cat "$root/generation")" XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$@"
@@ -185,6 +185,23 @@ case "${1:-}" in
   rdata="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/southbag-recovery"
   mkdir -p "$rdata/data" "$rdata/cache"
   start_scope recovery env XDG_DATA_HOME="$rdata/data" XDG_CACHE_HOME="$rdata/cache" "$COG" --gapplication-app-id=cc.southbag.recovery --platform=wl --bg-color='#050608' http://127.0.0.1:8080/recovery.html
+  ;;
+ quiesce)
+  # Compositor loss is not sign-out: keep account, generation and private
+  # profiles. Stop all tracked windows before a new compositor can use them.
+  touch "$root/compositor-stale"
+  failed=0
+  for note in "$root"/*.unit; do
+   { [ -f "$note" ] || [ -L "$note" ]; } || continue
+   stop_scope "$note" || failed=1
+  done
+  units=$("$SYSTEMCTL" --user list-units --type=scope --no-legend) || exit 1
+  for u in $(printf '%s\n' "$units" | awk '{print $1}'); do
+   case "$u" in southbag-device-*.scope) stop_unit "$u" || failed=1 ;; esac
+  done
+  [ "$failed" -eq 0 ] || exit 1
+  ! escaped_writers || { echo "quiesce: escaped writer still holds the profile root" >&2; exit 1; }
+  rm -f "$state/nav-state" "$root/compositor-stale"
   ;;
  reset)
   expected=${2:-}
