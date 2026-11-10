@@ -5,9 +5,8 @@ Description=Southbag OS readiness marker
 After=systemd-user-sessions.service
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/local/bin/southbag-ready
-RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target

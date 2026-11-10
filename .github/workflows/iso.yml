@@ -10,6 +10,16 @@ on:
       - ".github/workflows/iso.yml"
   workflow_dispatch:
     inputs:
+      publish_release:
+        description: 'Publish the verified main-branch ISO to a new GitHub Release'
+        type: boolean
+        required: false
+        default: false
+      release_tag:
+        description: 'New version tag, for example v0.1.0 (required for publishing)'
+        type: string
+        required: false
+        default: ''
       dormant_ci1:
         description: 'Include the separately qualified exact dormant ci1 package; no activation'
         type: boolean
@@ -24,9 +34,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      boot_ready: ${{ steps.smoke.outputs.ready }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
+
+      - name: Validate release request
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          DORMANT: ${{ inputs.dormant_ci1 }}
+        run: |
+          [ "$GITHUB_REPOSITORY" = 'SouthbagHQ/os' ] && [ "$GITHUB_REF" = 'refs/heads/main' ] || {
+            echo '::error::Releases must be built from SouthbagHQ/os main.'; exit 1;
+          }
+          [ "$DORMANT" = 'false' ] || { echo '::error::Diagnostic worker images are not release images.'; exit 1; }
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || {
+            echo '::error::Supply a new version tag such as v0.1.0.'; exit 1;
+          }
 
       - run: bun install --frozen-lockfile
       - name: Build the shell for the device
@@ -113,10 +139,11 @@ jobs:
           rm -f squashfs.img grub.cfg
           [ "$fail" -eq 0 ] || { echo "::error::Image is missing required files."; exit 1; }
 
-      # Not blocking. GitHub's standard runners have no KVM, and under pure
-      # emulation this does not reach userspace in any workable time. It is
-      # kept for the serial log it produces; real hardware is the real test.
+      # Artifact builds retain diagnostics on a failed smoke. Release publishing
+      # separately requires the positive ready output, so it cannot inherit
+      # this continue-on-error behavior. Hardware support needs separate tests.
       - name: Smoke boot it
+        id: smoke
         continue-on-error: true
         run: |
           sudo apt-get update -qq
@@ -131,16 +158,19 @@ jobs:
             accel="-accel kvm -cpu host"
           else
             echo "::warning::No KVM. Falling back to emulation, which is slow."
-            accel="-accel tcg -cpu max"
+            accel="-accel tcg -cpu qemu64"
           fi
 
+          # Use conservative baseline CPU emulation and standard VGA under TCG.
+          # CPU max exposed an LLVM renderer crash in CI; this smoke does not
+          # certify advanced SIMD or virtio graphics hardware support.
           # UEFI, 2GB of RAM: the memory profile the OS is meant to run in.
           timeout 840 qemu-system-x86_64 \
             $accel \
             -machine q35 -m 2048 -smp 2 -nographic -no-reboot \
             -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
             -drive if=pflash,format=raw,unit=1,file=vars.fd \
-            -device virtio-gpu-pci \
+            -vga std \
             -cdrom out/southbag-os.iso \
             -boot d \
             -serial file:serial.log \
@@ -153,12 +183,32 @@ jobs:
           # labwc is up and cog is running. Anything less is a broken image.
           grep -o "SOUTHBAG-OS-[A-Z-]*" serial.log | sort -u || true
 
+          # A transient ready marker is not a healthy boot. The full smoke
+          # window above must also stay free of renderer/kernel crashes and
+          # compositor restarts, or a reboot loop can look like success.
+          if grep -Eq 'segfault at|general protection fault|Kernel panic|Oops:' serial.log; then
+            echo '::error::Runtime crash detected after boot; refusing release readiness.'
+            exit 1
+          fi
+          if grep -q 'SOUTHBAG-OS-UNSTABLE' serial.log ||
+             ! grep -q 'SOUTHBAG-OS-STABLE' serial.log; then
+            echo '::error::No sustained healthy compositor/shell interval during smoke.'
+            exit 1
+          fi
           if grep -q "SOUTHBAG-OS-READY" serial.log; then
-            echo "Booted to a running shell."
+            echo "Booted to a running shell without observed runtime crashes."
+            echo "ready=true" >>"$GITHUB_OUTPUT"
           else
             echo "::error::ISO did not reach a running shell. See serial.log."
             exit 1
           fi
+
+      - name: Record release checksums and provenance
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release && steps.smoke.outputs.ready == 'true'
+        run: |
+          (cd out && sha256sum southbag-os.iso >SHA256SUMS)
+          printf 'Southbag OS ISO\n\nSource commit: %s\nBuild: %s/%s/actions/runs/%s\n\nUEFI live ISO. This build passed structural verification and booted to the running-shell readiness marker under QEMU. This does not certify physical hardware, sound, camera or backlight support.\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
 
       - name: Report size
         if: always()
@@ -171,6 +221,45 @@ jobs:
           name: southbag-os-iso
           path: |
             out/southbag-os.iso
+            out/SHA256SUMS
+            out/RELEASE.md
             out/southbag-inject_*_source.tar.gz
             serial.log
           if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: southbag-os-release-${{ inputs.release_tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Require a verified boot
+        env:
+          BOOT_READY: ${{ needs.build.outputs.boot_ready }}
+        run: |
+          [ "$BOOT_READY" = 'true' ] || { echo '::error::No release: ISO did not reach a running shell.'; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: southbag-os-iso
+          path: release-input
+      - name: Verify and publish a new immutable version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd release-input/out
+          sha256sum --check SHA256SUMS
+          gh --version
+          # Never overwrite an existing version or attach a new image to it.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo '::error::Tag already exists. Select a new version.'; exit 1;
+          fi
+          gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md
