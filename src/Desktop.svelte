@@ -40,10 +40,32 @@
     }
   }
 
+  /**
+   * Volume keys adjust the mixer and nothing else. By spec there is no
+   * volume control or indicator anywhere in the shell, so this surfaces
+   * nothing - not even a transient OSD. Off the device the host OS owns
+   * these keys and the page never sees them.
+   */
+  function volume(action: "up" | "down" | "mute") {
+    if (!onDevice) return;
+    void fetch(`/cgi-bin/volume?${action}`, { method: "POST" }).catch(() => {});
+  }
+
   function onKeydown(event: KeyboardEvent) {
     if (onDevice && event.ctrlKey && event.altKey && (event.key === "l" || event.key === "L")) {
       event.preventDefault();
       void lock();
+      return;
+    }
+    if (
+      event.key === "AudioVolumeUp" ||
+      event.key === "AudioVolumeDown" ||
+      event.key === "AudioVolumeMute"
+    ) {
+      event.preventDefault();
+      void volume(
+        event.key === "AudioVolumeUp" ? "up" : event.key === "AudioVolumeDown" ? "down" : "mute",
+      );
     }
   }
 
