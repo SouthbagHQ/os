@@ -17,3 +17,13 @@ pointerdown/up and mousedown/up but no click. With the rebuilt module, the same
 click emitted a DOM click and activated the button. This is emulator overlay
 proof, not a fresh-image or physical hardware claim. Existing dialog and
 shutdown behavior still needs qualification on the resulting ISO.
+
+## Surface-entry coordinates
+
+Wayland can send pointer-enter and a button press without an intervening motion.
+Update the saved coordinates from pointer-enter so the native dialog hit-test
+uses its new surface coordinates, not the previous page coordinates. This also
+fixes a direct move-to-dialog-button click that otherwise needed a second move.
+The local emulator regression passed this exact move-and-click sequence with
+the rebuilt module; a fresh image is required before calling the amendment
+image-qualified.
