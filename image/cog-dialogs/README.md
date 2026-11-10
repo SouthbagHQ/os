@@ -91,3 +91,50 @@ division inside the dialog), PROMPT v1 default-text limitation.
 
 Qualification bar for merging anything: the real ten-acknowledgement
 consent journey completes on-device with rendered, actionable dialogs.
+
+---
+
+# Related patch: shutdown-crash teardown ordering (cog-shutdown-ordering.patch)
+
+Problem: every plain termination of the Southbag shell session (SIGTERM,
+session stop) crashed cog in ClientBundleEGL::releaseShmBuffer during
+platform finalize (symbolized core backtrace captured 2026-11-09). Root
+cause, source-verified against cog 0.18.4 (tag c462567) and
+wpebackend-fdo 1.16.0: webkit_web_view_backend_new() registers
+wpe_view_backend_exportable_fdo_destroy as the destroy notify for
+wpe_host_data.exportable, so when the web view is destroyed the
+WebKit-side client bundle is deleted, but the wayland platform's global
+wpe_host_data.exportable keeps pointing at the freed exportable.
+cog_wl_platform_finalize() -> clear_buffers() -> shm_buffer_destroy()
+then dispatches release_shm_exported_buffer through the stale pointer
+into unmapped heap (fault at clientBundle+0x10 = its viewBackend
+member). ViewBackend::~ViewBackend upstream never clears the pointer.
+
+Fix (applied after the dialog patch in the same 0022 hook): a destroy
+notify wrapper (on_wk_view_backend_destroyed) clears the platform-global
+exportable before calling the real wpe_view_backend_exportable_fdo_destroy,
+plus NULL-guards on every exportable dispatch reachable during or after
+teardown (frame-complete, shm buffer release, shm_buffer_destroy,
+compositor buffer release, finalize image release). Live-backend dispatch
+paths are unchanged; teardown now frees buffers without touching the dead
+client bundle.
+
+Status: PR-prep DRAFT. Produced as a real diff against the pristine
+0.18.4 tree plus the dialog patch (exactly the tree the hook builds);
+applies cleanly with both patch -p1 --dry-run and git apply --check, and
+the applied result is byte-identical to the tested tree. COMPILE+LINK
+VERIFIED 2026-11-10 with the same meson/ninja trixie-sysroot build as
+the dialog patch (RC=0, zero warnings on cog-platform-wl.c). Unit-level
+fixture verification 2026-11-10: the patched file was compiled with a
+stub harness (no Wayland server, no WebKit) driving four cases - (A)
+exportable destroyed before clear_buffers: zero dispatches into the dead
+bundle, all buffers/pools still freed, buffer list drained; (B) live
+exportable: exactly one release dispatch with correct arguments (normal
+path preserved); (C) compositor release after teardown: no dispatch,
+stale pointer cleared; (D) frame callback after teardown: no dispatch,
+dispatched when live. NOT runtime-verified: the crash path has not been
+exercised on-device. Proving the TERM no longer SIGSEGVs requires an
+image rebuild with this hook and a booted session; that is the
+qualification bar for merging and is deliberately out of scope for this
+branch.
+
