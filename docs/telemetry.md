@@ -1,52 +1,61 @@
-# Telemetry
+# Analytics (Palantir)
 
-Southbag OS collects none. This document defines that as a scope, so
-"no telemetry" is a verifiable contract rather than an absence of code.
+Southbag OS reports analytics exactly like every other Southbag service.
+Collection is always on. There is no off switch, no consent prompt, and no
+build without it; it is part of the product, decided by the proprietor.
 
-## What the OS never sends
+## Transport
 
-No component of the installed system transmits, queues for later
-transmission, or asks a third party to collect on its behalf:
+Palantir is Southbag's PostHog wiring. The shell serves the same
+`palantir.js` every Southbag app serves (the file is maintained identical
+across apps) and initialises it with:
 
-- Usage or interaction data (apps opened, features used, session length,
-  click or key counts).
-- Crash reports, stack traces, or core dumps.
-- Device identifiers beyond what the network path itself reveals (below),
-  and no persistent installation ID of any kind.
-- Location, nearby-network, or sensor data.
-- Input content of any kind. The input broker and the Kevin
-  capitalisation worker see keystrokes to do their job; neither records,
-  counts, or transmits them, and per-keystroke statistics are out of
-  scope permanently.
+- Project key `phc_rStyYsw4wrB8MwXEsPBJjz57uipHycNVwFPaw2m3aYXo`, sent to
+  `https://palantir.southbag.cc` (Southbag's PostHog ingress; dashboards at
+  `https://us.posthog.com`).
+- Super property `southbag_app: "os"`, matching `identity`, `banking` and
+  the other services, so events slice by app in one project.
+- A first-party cookie on `.southbag.cc` plus localStorage persistence, so
+  one person is the same person across every Southbag app.
 
-## What leaves the device anyway
+## What is collected, client side
 
-These are service connections the user or the update mechanism initiates,
-not telemetry. Each reveals the source IP (and TLS hostname where
-applicable) to the named peer and nothing more:
+Same configuration as the other services, verbatim:
 
-- **Updates.** apt fetches from deb.debian.org and the Southbag apt
-  channel. The fetch carries the requested package paths; the OS sends no
-  version report, success report, or heartbeat.
-- **Time.** systemd-timesyncd NTP to the Debian pool.
-- **Name resolution.** DNS to the DHCP-provided resolver.
-- **Identity.** Auth flows against identity.southbag.cc, only when the
-  user signs in. Identity's own in-product event tracking on its web
-  pages is a property of that service, governed by its own policy, not
-  by the OS.
-- **Drive and Browser content.** Only when the user opens them.
+- Pageviews on every navigation, page-leave events, and full autocapture
+  of clicks and form interactions.
+- Heatmaps, dead clicks and rage clicks.
+- Exceptions and console logs.
+- Performance: network timing and web vitals.
+- Session recording with no input masking (`maskAllInputs: false`),
+  including cross-origin iframes, request headers and bodies, and canvas.
+  What the user sees and types in the shell - including into credential
+  fields - is reproducible in a recording. That is the standard Southbag
+  configuration, not an OS-specific choice.
 
-## Local diagnostics
+## Who events belong to
 
-Kernel and service logs stay on the device in the systemd journal,
-volatile (in-memory) on the live image, never uploaded. If a user wants
-to share a log they export it themselves; there is no "send report"
-path that moves data without an explicit file-level action.
+When the OS session is signed in, events identify as the user's Southbag
+Identity account (id, email, name), resolved from the session itself or,
+failing that, from Identity's `.southbag.cc` session cookie - the same
+resolution every app does. A confirmed signed-out answer resets the
+profile to anonymous rather than attributing events to a stale user.
 
-## If telemetry is ever wanted
+## Server-side events
 
-It arrives as a new, opt-in component with a per-category switch listed
-in this document, defaulting to off, and this section names every field
-it sends. Silent introduction would violate this document; a change
-here is a product decision for the proprietor, not an implementation
-detail.
+OS CGIs emit server events to the same project with
+`$lib: "palantir-server"`, `source: "server"`, `southbag_app: "os"`, the
+Identity user id as distinct id, and the browser's PostHog session id
+(read from the `ph_…_posthog` cookie) so a server event joins the same
+person and session replay as the click that caused it. IP, user agent and
+URL ride along, as they do for Identity's auth events. Events include
+sign-in begin/complete/failure, lock and unlock, account binding, update
+application, and provisioning outcomes.
+
+## Keystrokes and secrets
+
+No component reads input devices for analytics. Form contents and typed
+text are captured the same way they are in every Southbag app: through
+autocapture and unmasked session recording in the shell, never through
+the input broker or the Kevin capitalisation worker, which remain
+transport-only.
