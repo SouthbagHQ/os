@@ -24,12 +24,24 @@ cp -R "$repo/image/shell-extra/." "$root/usr/share/southbag-shell/"
 chmod +x "$root/usr/share/southbag-shell/cgi-bin/"*
 find "$root/usr/share/southbag-shell" -type d -exec chmod 755 {} +
 
+# The shell's runtime helpers must update with its web bundle. Lock helpers
+# and broker files are owned by southbag-lockd, never by both packages.
+for name in southbag-session southbag-device-session southbag-shell southbag-ready southbag-nav-state southbag-analytics southbag-brightness-max; do
+  install -D -m 755 "$repo/image/config/includes.chroot/usr/local/bin/$name" "$root/usr/local/bin/$name"
+done
+for path in etc/labwc/rc.xml etc/systemd/system/southbag-ready.service; do
+  install -D -m 644 "$repo/image/config/includes.chroot/$path" "$root/$path"
+done
+if [[ -s "$repo/image/config/includes.chroot/usr/share/keyrings/southbag-archive-keyring.gpg" ]]; then
+  install -D -m 644 "$repo/image/config/includes.chroot/usr/share/keyrings/southbag-archive-keyring.gpg" "$root/usr/share/keyrings/southbag-archive-keyring.gpg"
+fi
+
 cat > "$root/DEBIAN/control" <<CTRL
 Package: southbag-shell
 Version: $version
 Architecture: all
 Maintainer: Southbag <os-updates@southbag.cc>
-Depends: busybox
+Depends: busybox, systemd, python3, jq, alsa-utils
 Section: misc
 Priority: optional
 Description: Southbag OS shell
@@ -44,6 +56,9 @@ CTRL
 cat > "$root/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+fi
 touch /run/reboot-required
 POST
 chmod 755 "$root/DEBIAN/postinst"

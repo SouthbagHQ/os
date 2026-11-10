@@ -55,6 +55,15 @@ gcc -O2 -Wall -Wextra -Werror -o /usr/local/bin/southbag-input-client \
  /opt/southbag-broker-src/southbag-input-client.c
 chmod 755 /usr/local/bin/southbag-input-client
 
+# Install both packages using the same recipe as the signed apt pool.
+# No network or Southbag repository is needed here. Source still exists.
+build=/tmp/southbag-package-build
+SOUTHBAG_PREBUILT_ROOT=/ bash "$build/packaging/build-lockd-deb.sh" "$(cat "$build/version")" "$build/pool"
+dpkg -i "$build"/pool/southbag-shell_*.deb "$build"/pool/southbag-lockd_*.deb
+rm -rf "$build"
+# Initial installation is already part of this image, not a pending upgrade.
+rm -f /run/reboot-required
+
 cd /
 rm -rf /opt/southbag-broker-src
 rm -rf /opt/southbag-lockd-src /tmp/ext-session-lock-v1.c /tmp/ext-session-lock-v1.h

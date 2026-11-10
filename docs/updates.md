@@ -29,13 +29,8 @@ referenced with `Signed-By`. apt refuses anything not signed by it
 ## CI proof
 
 `.github/workflows/packages.yml` runs on every pull request (no secrets, no
-signing, no deploy) and builds and structurally validates the packages. The
-lockd sources are not on this branch yet, so for the compile test only the
-workflow fetches them read-only from the `agent/session-lock` branch at
-pinned commit `7e7803ca535b3107520ae1aee00c50f83f56598d`; nothing is merged,
-committed or deployed, and the job fails rather than passing silently if the
-sources cannot be fetched. Once the session-lock PR lands, the workflow
-builds from the checked-out tree instead.
+signing, no deploy) and builds and structurally validates the packages. All lockd and broker sources are now in-tree. CI builds from that exact tree,
+not another branch.
 
 ## Staged, fail-closed activation
 
@@ -43,7 +38,7 @@ The channel is inert until a one-time signing setup happens:
 
 - Hook `0026-southbag-updates.hook.chroot` checks for the keyring at image
   build time. **Absent:** the sources entry is removed and main's CI cannot
-  break over the channel. **Present:** the channel is enabled. Only the
+  break over the channel. **Present:** the source is staged and a root-owned boot unit installs it before the apt timers. Only the
   Southbag channel is staged: every image - keyed or not - installs
   `unattended-upgrades` and the `51southbag-updates` config, so Debian
   security auto-updates and the 03:30 auto-restart window are active from
@@ -64,26 +59,40 @@ The channel is inert until a one-time signing setup happens:
 
 ### Activation, once granted
 
-Signing setup is authorized account work, not something handed to a person
-to paste. An authorized operator (an Instinct task agent or maintainer with
-credentials allowed to write this repo's Actions secrets) runs
-`packaging/setup-signing.sh`: it generates the ed25519 key in a temp
-keyring and exports the private half twice: ARMORED into `gh secret set
-SOUTHBAG_APT_SIGNING_KEY` (the format `packaging/build-repo.sh` imports in
-CI), and BINARY OpenPGP into a 0600 staging file for the recovery copy -
-both representations import identically into gpg. Storing the recovery
-copy through the platform's sanctioned persistent-secret mechanism for
-agent-generated credentials is a REQUIRED step of activation, not an
-option: activation is not complete until it is stored and the staging file
-shredded (the exact storage contract is the executing agent's to follow,
-not this repo's). The script fails closed if gh is missing or
-unauthenticated. GitHub secrets are write-only, so the stored recovery
-copy is the rotation authority: lose both and the old key can never sign
-again, stranding devices on a re-flash for rotation. Order: set the secret, let pages publish `/apt/`, then
-commit the public key - committing the keyring first would point devices at
-a repo that is not there yet. Devices join the channel from an ISO built
-after that; anything already installed needs one re-flash to join. Every
-update after that is in-place.
+This repository cannot grant permission for account or secret work. The owner
+approved signing-key generation, the one named repository secret and signed
+repository publication on 2026-11-11. That grant does not cover other secrets
+or repository settings.
+
+The public archive key is pinned at the keyring path above. Its fingerprint is:
+`68032574F32337A9044C24D263BE31CEAC704DB2`.
+The private half belongs only in `SOUTHBAG_APT_SIGNING_KEY` and the owner's
+separately secured recovery copy, never in git or logs. No private recovery
+link belongs in this document. GitHub secrets are write-only; keep the recovery
+copy in a password manager before its one-time transfer expires.
+
+The keyring change is initially a branch candidate. Publish the signed pool
+from the exact reviewed branch, verify it through apt with only this public
+key, then merge and build the release image. Do not call the channel active
+until the public pool and fresh-image apt check both pass. Existing v0.1.0
+images have no pinned key or Southbag source: they need a refreshed image
+once to join. Future package upgrades are in-place on installed systems.
+
+### Installed packages and version ordering
+
+The image installs `southbag-shell` and `southbag-lockd` into dpkg's database,
+not merely loose files. Hook 0016 reuses its compiled target binaries and the
+same lock-package metadata/lifecycle recipe used by the repository build.
+The shell package includes the matching session/launcher runtime and archive
+public key. Lock helpers and broker files remain in the lock package; neither
+package claims the other's files. Package installation during image creation
+does not leave a spurious reboot-required marker.
+
+`packaging/package-version.sh` emits `0.1.0+gitNNNNNNNNNN` from the full
+ancestry count. Each normal main commit/merge increases it. Full history is
+required, including in image and package workflows. Commit hashes do not sort
+chronologically and are no longer used as the ordering component. Force-
+rewriting main can break this guarantee and is not a supported release path.
 
 ## What "automatic" means, exactly
 
@@ -189,11 +198,17 @@ The repo is static files under `dist/apt/` on the existing Pages site:
 
 ## Deliberately absent
 
-- **No telemetry.** Static files; apt fetches reveal source IPs to the
-  host, nothing is reported back by the OS. Device-health or usage
-  collection is a separate undecided question; nothing here builds it.
+- **No updater-specific telemetry.** The apt repository is static files;
+  apt fetches reveal source IPs to the host. The separate OS analytics
+  integration is described in `docs/telemetry.md`, not added by this channel.
 - **No per-device channels or staged rollout.** Requested away. If wanted
   later: a second suite (`dists/testing`) plus a different sources file on
   test devices.
 - **No downgrade support, no A/B partitions.** Roll forward, re-flash as
   the floor.
+
+The image keeps the signed source staged at
+`/usr/share/southbag-updates/southbag.sources` throughout live-build.
+`southbag-updates-channel.service` copies it to apt before `timers.target`
+on boot, only when the public key exists. This avoids a build-time dependency
+on the public Pages repository, including live-build's final apt refresh.

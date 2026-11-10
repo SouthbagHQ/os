@@ -24,36 +24,36 @@ if [[ ! -f "$src/southbag-lockd.c" ]]; then
   echo "No lockd sources in this tree; repo carries no southbag-lockd package."
   exit 0
 fi
-for t in gcc pkg-config wayland-scanner; do
-  command -v "$t" >/dev/null || { echo "Missing $t. Install: build-essential pkg-config libwayland-dev wayland-protocols libcairo2-dev libxkbcommon-dev libjpeg62-turbo-dev" >&2; exit 1; }
-done
-
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
-
-# Same codegen and flags as the image hook - keep both in sync.
-wayland-scanner client-header \
-  /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
-  "$build/ext-session-lock-v1.h"
-wayland-scanner private-code \
-  /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml \
-  "$build/ext-session-lock-v1.c"
-
 root="$build/root"
 install -d "$root/DEBIAN" "$root/usr/local/bin"
-gcc -O2 -Wall -Wextra -I"$build" -o "$root/usr/local/bin/southbag-lockd" \
-  "$src/southbag-lockd.c" "$build/ext-session-lock-v1.c" \
-  $(pkg-config --cflags --libs wayland-client cairo xkbcommon)
-gcc -O2 -Wall -Wextra -o "$root/usr/local/bin/southbag-face-capture" \
-  "$src/southbag-face-capture.c" -ljpeg
+# Image hook 0016 already compiled the exact target binaries. Reuse them
+# without a second compiler invocation, but share ALL package metadata,
+# lifecycle scripts and file ownership with CI's native build.
+if [[ "${SOUTHBAG_PREBUILT_ROOT:-}" = / ]]; then
+  for name in southbag-lockd southbag-face-capture southbag-input-client; do
+    install -m 755 "/usr/local/bin/$name" "$root/usr/local/bin/$name"
+  done
+else
+  for t in gcc pkg-config wayland-scanner; do
+    command -v "$t" >/dev/null || { echo "Missing $t" >&2; exit 1; }
+  done
+  wayland-scanner client-header /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml "$build/ext-session-lock-v1.h"
+  wayland-scanner private-code /usr/share/wayland-protocols/staging/ext-session-lock/ext-session-lock-v1.xml "$build/ext-session-lock-v1.c"
+  gcc -O2 -Wall -Wextra -I"$build" -o "$root/usr/local/bin/southbag-lockd" \
+    "$src/southbag-lockd.c" "$build/ext-session-lock-v1.c" \
+    $(pkg-config --cflags --libs wayland-client cairo xkbcommon)
+  gcc -O2 -Wall -Wextra -o "$root/usr/local/bin/southbag-face-capture" "$src/southbag-face-capture.c" -ljpeg
+  gcc -O2 -Wall -Wextra -Werror -o "$root/usr/local/bin/southbag-input-client" \
+    "$repo/image/config/includes.chroot/opt/southbag-broker-src/southbag-input-client.c"
+fi
 for helper in southbag-lock southbag-unlock southbag-face-unlock; do
   [[ -f "$bin/$helper" ]] && install -m 755 "$bin/$helper" "$root/usr/local/bin/$helper"
 done
 # Customer stop-only broker transport and root lifecycle authority ship atomically
 # with the lock helper that requires them. No input worker is installed/started.
 install -d "$root/usr/local/sbin" "$root/etc/systemd/system"
-gcc -O2 -Wall -Wextra -Werror -o "$root/usr/local/bin/southbag-input-client" \
- "$repo/image/config/includes.chroot/opt/southbag-broker-src/southbag-input-client.c"
 install -m 755 "$repo/image/config/includes.chroot/usr/local/sbin/southbag-input-broker" "$root/usr/local/sbin/"
 for unit in southbag-input-broker.service southbag-input-broker.socket southbag-input-broker@.service; do
  install -m 644 "$repo/image/config/includes.chroot/etc/systemd/system/$unit" "$root/etc/systemd/system/$unit"

@@ -3,9 +3,8 @@
 # activation-gated: until the signed Pages repository exists, its Release
 # file 404s, and ANY hook's apt-get update then fails hard and kills the
 # whole image build (first seen in 0016, then 0022). Mask the sources entry
-# for the duration of the build; hook 0026 restores it and still decides
-# the channel's final in-image state (kept only when the archive keyring
-# is present). Runtime behavior is unaffected either way.
+# through all build-time apt refreshes. Hook 0026 stages the source for a
+# root-owned boot unit, before the apt timers, only with the archive key.
 set -eu
 
 sources=/etc/apt/sources.list.d/southbag.sources
