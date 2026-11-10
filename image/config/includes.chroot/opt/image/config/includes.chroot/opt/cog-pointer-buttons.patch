@@ -1,0 +1,29 @@
+--- a/platform/wayland/cog-platform-wl.c
++++ b/platform/wayland/cog-platform-wl.c
+@@ -9,6 +9,7 @@
+ #include "../../core/cog.h"
+ 
+ #include <errno.h>
++#include <linux/input-event-codes.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+ #include <wpe/webkit.h>
+@@ -933,14 +934,14 @@
+ {
+     wl_data.event_serial = serial;
+ 
+-    /* @FIXME: what is this for?
++    /* Backport Igalia/cog f87b71b: normalize Linux button codes and retain
++     * the released button, so WebKit can pair the press with its release. */
+     if (button >= BTN_MOUSE)
+         button = button - BTN_MOUSE + 1;
+     else
+         button = 0;
+-    */
+-
+-    wl_data.pointer.button = !!state ? button : 0;
++
++    wl_data.pointer.button = button;
+     wl_data.pointer.state = state;
+ 
+     struct wpe_input_pointer_event event = {
