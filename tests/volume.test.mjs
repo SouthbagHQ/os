@@ -66,3 +66,15 @@ test('a refused mixer fails closed as 500',()=>{
  const out=run({REQUEST_METHOD:'POST',HTTP_ORIGIN:'http://127.0.0.1:8080',QUERY_STRING:'up',SOUTHBAG_AMIXER:amixer});
  assert.match(out,/Status: 500/);
 });
+
+// Device-wide bindings must not depend on which web page has focus.
+test('compositor owns all hardware volume keys, without a page handler or OSD',()=>{
+ const config=readFileSync(join(here,'..','image','config','includes.chroot','etc','labwc','rc.xml'),'utf8');
+ for(const [key,args] of [['XF86AudioRaiseVolume','5%+'],['XF86AudioLowerVolume','5%-'],['XF86AudioMute','toggle']]){
+  assert.ok(config.includes('<keybind key="'+key+'">'));
+  assert.ok(config.includes('command="amixer -q set Master '+args+'"'));
+ }
+ const desktop=readFileSync(join(here,'..','src','Desktop.svelte'),'utf8');
+ assert.doesNotMatch(desktop,/AudioVolume|cgi-bin\/volume/);
+ assert.doesNotMatch(config,/notify-send|swayosd|wob/);
+});
