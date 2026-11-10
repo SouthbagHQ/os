@@ -41,13 +41,6 @@
     }
   }
 
-  function onKeydown(event: KeyboardEvent) {
-    if (onDevice && event.ctrlKey && event.altKey && (event.key === "l" || event.key === "L")) {
-      event.preventDefault();
-      void lock();
-    }
-  }
-
   function openApp(id: string) {
     const app = appById(id);
     if (!app) return;
@@ -74,8 +67,6 @@
     (window as unknown as Record<string, unknown>).__sequence = sequence;
   }
 </script>
-
-<svelte:window onkeydown={onKeydown} />
 
 <Wallpaper />
 {#if drawnHost}
