@@ -38,7 +38,7 @@ test('server outcomes use verified binding and replay id, never token/cookie/bod
   const env={...process.env,SOUTHBAG_STATE_DIR:join(dir,'state'),SOUTHBAG_ANALYTICS_WGET:join(dir,'wget'),CAPTURE:join(dir,'capture'),HTTP_COOKIE:'ph_phc_rStyYsw4wrB8MwXEsPBJjz57uipHycNVwFPaw2m3aYXo_posthog='+cookie,HTTP_AUTHORIZATION:'Bearer NEVER-FORWARD'};
   assert.equal(spawnSync('sh',[helper,'account_bound'],{env,input:'NEVER-FORWARD'}).status,0);
   const result=readFileSync(join(dir,'capture'),'utf8');
-  assert.match(result,/verified-subject/);assert.match(result,/replay-fixture/);assert.match(result,/palantir-server/);assert.doesNotMatch(result,/NEVER-FORWARD|fixture@example.invalid/);
+  assert.match(result,/verified-subject/);assert.match(result,/replay-fixture/);assert.match(result,/palantir-server/);assert.match(result,/https:\/\/us\.i\.posthog\.com\/i\/v0\/e\//);assert.doesNotMatch(result,/NEVER-FORWARD|fixture@example.invalid/);
   rmSync(join(dir,'capture'));assert.notEqual(spawnSync('sh',[helper,'arbitrary-event'],{env}).status,0);assert.equal(existsSync(join(dir,'capture')),false);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
