@@ -1,0 +1,29 @@
+#!/bin/sh
+# Fixed workflow outcomes only. Never accepts a request body, token, secret,
+# free-form error, or URL as an analytics property.
+set -eu
+case "${1:-}" in
+ account_bound|account_cleared|lock_engaged|unlock_succeeded|unlock_refused|update_applied|provision_succeeded|provision_refused) event=$1 ;;
+ *) exit 1 ;;
+esac
+state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
+key=phc_rStyYsw4wrB8MwXEsPBJjz57uipHycNVwFPaw2m3aYXo
+id=
+session=
+# Read only the cookie fields that join a replay, never forward the cookie.
+cookie=$(printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | sed -n "s/^ *ph_${key}_posthog=//p" | head -1)
+if [ -n "$cookie" ]; then
+ decoded=$(printf '%s' "$cookie" | python3 -c 'import json,sys,urllib.parse
+try:
+ v=json.loads(urllib.parse.unquote(sys.stdin.read())); print(json.dumps(v if isinstance(v,dict) else {}))
+except Exception: print("{}")' 2>/dev/null || true)
+ id=$(printf '%s' "$decoded" | jq -r '.distinct_id // empty' 2>/dev/null || true)
+ session=$(printf '%s' "$decoded" | jq -r '."$sesid"[1] // empty' 2>/dev/null || true)
+fi
+# The device binding was independently verified by Identity, not page input.
+if [ -r "$state/account" ]; then id=$(cut -f1 "$state/account" | head -1); fi
+[ -n "$id" ] && [ "${#id}" -lt 256 ] || exit 0
+[ "${#session}" -lt 256 ] || session=
+payload=$(jq -nc --arg key "$key" --arg event "os_$event" --arg id "$id" --arg session "$session" '{api_key:$key,event:$event,distinct_id:$id,properties:({"$lib":"palantir-server",source:"server",southbag_app:"os"} + (if $session == "" then {} else {"$session_id":$session} end))}')
+# Bounded best effort. Analytics failure cannot grant/deny authentication.
+${SOUTHBAG_ANALYTICS_WGET:-/bin/busybox wget} -q -T 2 -O /dev/null --header 'Content-Type: application/json' --post-data "$payload" https://palantir.southbag.cc/capture/ 2>/dev/null || true
