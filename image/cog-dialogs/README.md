@@ -137,4 +137,3 @@ exercised on-device. Proving the TERM no longer SIGSEGVs requires an
 image rebuild with this hook and a booted session; that is the
 qualification bar for merging and is deliberately out of scope for this
 branch.
-
