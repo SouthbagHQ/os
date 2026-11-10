@@ -26,3 +26,20 @@ test('write permission is confined to release job',()=>{
  assert.match(release,/contents: write/);
  assert.match(release,/cancel-in-progress: false/);
 });
+
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const crashGate=workflow.slice(workflow.indexOf('          if grep -Eq'),workflow.indexOf('          if grep -q "SOUTHBAG-OS-READY"')).split('\n').map(x=>x.replace(/^          /,'')).join('\n');
+for(const [label,log,passes] of [
+ ['stable','SOUTHBAG-OS-SESSION-START\nSOUTHBAG-OS-READY\n',true],
+ ['renderer crash after ready','SOUTHBAG-OS-SESSION-START\nSOUTHBAG-OS-READY\nllvmpipe-1: segfault at deadbeef\n',false],
+ ['kernel panic','SOUTHBAG-OS-SESSION-START\nKernel panic - not syncing\n',false],
+ ['restart loop','SOUTHBAG-OS-SESSION-START\nSOUTHBAG-OS-READY\nSOUTHBAG-OS-SESSION-START\n',false],
+ ['no compositor session','SOUTHBAG-OS-READY\n',false],
+]) test('sustained smoke '+label+' is '+(passes?'accepted':'rejected'),()=>{
+ const dir=mkdtempSync(join(tmpdir(),'release-smoke-'));
+ try{writeFileSync(join(dir,'serial.log'),log);const r=spawnSync('bash',['-c',crashGate],{cwd:dir,encoding:'utf8'});assert.equal(r.status===0,passes,r.stdout+r.stderr);}
+ finally{rmSync(dir,{recursive:true,force:true});}
+});
