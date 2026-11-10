@@ -31,7 +31,7 @@ export class CogWindowHost implements WindowHost {
 
   open(appId: string, _spec: { title: string; size: Size; min: Size }): number {
     void _spec;
-    fetch(`/cgi-bin/launch?app=${encodeURIComponent(appId)}`)
+    fetch(`/cgi-bin/launch?app=${encodeURIComponent(appId)}`, { method: "POST" })
       .then((response) => {
         this.#failed = response.ok ? null : appId;
       })

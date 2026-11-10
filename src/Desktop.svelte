@@ -18,6 +18,7 @@
   const onDevice = import.meta.env.MODE === "device";
   const host = onDevice ? new CogWindowHost() : new DomWindowHost();
   const drawnHost = $derived(host instanceof DomWindowHost ? host : null);
+  const deviceHost = $derived(host instanceof CogWindowHost ? host : null);
   let launcherOpen = $state(false);
   let lockMessage = $state<string | null>(null);
 
@@ -96,6 +97,9 @@
   }}
   {onsignout}
 />
+{#if deviceHost?.failed}
+  <div class="lock-message" role="alert">Could not open {appById(deviceHost.failed)?.name ?? "app"}. Please try again.</div>
+{/if}
 {#if lockMessage}
   <div class="lock-message" role="alert">{lockMessage}</div>
 {/if}
