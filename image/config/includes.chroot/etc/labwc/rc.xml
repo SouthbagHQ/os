@@ -35,10 +35,26 @@
   </windowRules>
 
   <keyboard>
+    <!-- Custom entries suppress labwc defaults. Keep only the required
+         window controls, without a terminal or compositor-exit shortcut. -->
+    <keybind key="A-F4">
+      <action name="If">
+        <query identifier="cc.southbag.shell" />
+        <then />
+        <else><action name="Close" /></else>
+      </action>
+    </keybind>
+    <keybind key="A-Tab"><action name="NextWindow" /></keybind>
+    <keybind key="A-S-Tab"><action name="PreviousWindow" /></keybind>
+    <!-- The compositor receives this with any service focused. The lock
+         helper keeps the existing account and broker-inhibit gates. -->
+    <keybind key="C-A-l">
+      <action name="Execute" command="/usr/local/bin/southbag-lock" />
+    </keybind>
     <!-- Hardware volume keys belong to the compositor, not a web page:
          they must keep working with any service or browser window focused.
          Fixed mixer commands run as customer (audio group), with no OSD.
-         Other shortcuts remain owned by the shell. -->
+         No sound OSD or indicator is added. -->
     <keybind key="XF86AudioRaiseVolume">
       <action name="Execute" command="amixer -q set Master 5%+" />
     </keybind>
