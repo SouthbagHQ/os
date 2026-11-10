@@ -36,6 +36,11 @@ fonts-dejavu-core
 libcairo2
 libjpeg62-turbo
 
+# Volume keys without a sound server: amixer sets the hardware mixer
+# directly (/cgi-bin/volume), and libasound is what GStreamer audio falls
+# back to in cog. No daemon, no mixer UI - adjustment is invisible by spec.
+alsa-utils
+
 # Daily security + Southbag repo upgrades, with the reboot window configured
 # in includes.chroot/etc/apt/apt.conf.d/51southbag-updates.
 unattended-upgrades
