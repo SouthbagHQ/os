@@ -63,6 +63,7 @@ test('reset stops tracked scopes, clears only owned profiles, rejects stale gene
  try{
   seedAccount(root,state);
   mkdirSync(join(root,'browser'));writeFileSync(join(root,'browser','cookie'),'private');
+  for(const f of ['browser-session.json','browser-handoff.json','identity-cookies.sqlite','identity-cookies.sqlite-wal','identity-cookies.sqlite-shm','.browser-session.tmp','.browser-handoff-fixture']) writeFileSync(join(root,f),'private fixture');
   writeFileSync(join(state,'settings'),'keep');
   assert.equal(call('launch','browser','sleep','30').status,0,'launch tracked');
   const notes=readdirSync(root).filter(f=>f.startsWith('app-browser-')&&f.endsWith('.unit'));
@@ -73,6 +74,7 @@ test('reset stops tracked scopes, clears only owned profiles, rejects stale gene
   assert.equal(call('reset','one').status,0,'reset accepted');
   assert.equal(existsSync(join(state,'account')),false);
   assert.equal(existsSync(join(root,'browser')),false,'private profile wiped');
+  for(const f of ['browser-session.json','browser-handoff.json','identity-cookies.sqlite','identity-cookies.sqlite-wal','identity-cookies.sqlite-shm','.browser-session.tmp','.browser-handoff-fixture']) assert.ok(!existsSync(join(root,f)),f+' wiped');
   assert.equal(readFileSync(join(state,'settings'),'utf8'),'keep','unrelated state preserved');
   assert.equal(existsSync(join(root,'generation')),false,'generation cleared');
   assert.equal(existsSync(join(root,'blocked')),false,'unblocked after clean reset');
@@ -147,6 +149,7 @@ test('ancestor process carrying the root path in its argv does not block reset',
   const r=spawnSync('sh',['-c','exec sh "$1" reset "$2"',`wrapper ${root}/browser`,manager,'one'],{env,encoding:'utf8',timeout:30000});
   assert.equal(r.status,0,`reset through ancestor argv: ${r.stderr}`);
   assert.equal(existsSync(join(root,'browser')),false,'private profile wiped');
+  for(const f of ['browser-session.json','browser-handoff.json','identity-cookies.sqlite','identity-cookies.sqlite-wal','identity-cookies.sqlite-shm','.browser-session.tmp','.browser-handoff-fixture']) assert.ok(!existsSync(join(root,f)),f+' wiped');
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 test('ancestor holding an open fd under the root still fails reset closed',()=>{

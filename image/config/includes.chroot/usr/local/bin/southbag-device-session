@@ -234,6 +234,7 @@ case "${1:-}" in
   fi
   # Account removed first under lock: Browser guard stops accepting callbacks.
   rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+  rm -f "$root/browser-session.json" "$root/browser-handoff.json" "$root/.browser-session.tmp" "$root"/.browser-handoff-*
   # The journey-phase record belongs to the era being torn down: clear it
   # with the account note, under the same lock, so a dead era's milestone
   # (e.g. account_bound) can never outlive its session and masquerade as
@@ -266,6 +267,7 @@ case "${1:-}" in
   [ "$failed" -eq 0 ] || { echo "reset: a scope stop failed closed" >&2; exit 1; }
   ! escaped_writers || { echo "reset: escaped writer still holds the profile root" >&2; exit 1; }
   rm -rf "$root/wpe-data" "$root/wpe-cache" "$root/browser"
+  rm -f "$root/identity-cookies.sqlite" "$root/identity-cookies.sqlite-wal" "$root/identity-cookies.sqlite-shm" "$root/identity-cookies.sqlite-journal"
   rm -f "$root/generation"
   rm -f "$root/blocked"
   ;;
