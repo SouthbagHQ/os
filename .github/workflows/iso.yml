@@ -10,6 +10,11 @@ on:
       - ".github/workflows/iso.yml"
   workflow_dispatch:
     inputs:
+      preserve_worker_inputs:
+        description: Publish approved hash-verified worker inputs, not an OS release
+        type: boolean
+        required: false
+        default: false
       publish_release:
         description: 'Publish the verified main-branch ISO to a new GitHub Release'
         type: boolean
@@ -32,6 +37,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ !inputs.preserve_worker_inputs }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -82,7 +88,7 @@ jobs:
           echo "SOUTHBAG_INJECT_LANE=ci1" >>"$GITHUB_ENV"
 
       - name: Download the qualified fixed-rule worker
-        if: !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1) }}
         uses: actions/download-artifact@v4
         with:
           name: kevin-source-candidate
@@ -92,7 +98,7 @@ jobs:
           path: out/kevin-input
 
       - name: Verify and package the exact fixed-rule input
-        if: !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1) }}
         run: |
           bash packaging/build-kevin-deb.sh out/kevin-input/espanso-candidate out/kevin-input/source.tar.gz out/kevin-input ci1
           echo "SOUTHBAG_KEVIN_DEB=$GITHUB_WORKSPACE/out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb" >>"$GITHUB_ENV"
@@ -287,3 +293,49 @@ jobs:
           gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS "${source_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md
+
+  preserve:
+    if: github.event_name == 'workflow_dispatch' && inputs.preserve_worker_inputs && !inputs.publish_release && github.ref == 'refs/heads/agent/kevin-normal-image'
+    permissions:
+      contents: write
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: kevin-source-candidate
+          repository: SouthbagHQ/os
+          run-id: 42929287076
+          github-token: ${{ github.token }}
+          path: out/qualified-input
+      - name: Verify exact qualified inputs and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd out/qualified-input
+          echo 'c28046a7573efedc8806e8ea70c60be8df3c4ff52101aa6264f929b4fc046f1d  espanso-candidate' | sha256sum --check
+          echo '9d00e6cd1b2917c63022664426c8f25e174644711882c1671894a60bb5e4d0d9  source.tar.gz' | sha256sum --check
+          cd ../..
+          bash packaging/build-kevin-deb.sh out/qualified-input/espanso-candidate out/qualified-input/source.tar.gz out/qualified-input ci1
+          cd out/qualified-input
+          echo 'e75fe8dba441f1543d618bd541e61eef660b788584f677a8189b74132b01cefe  southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb' | sha256sum --check
+          sha256sum espanso-candidate source.tar.gz southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb > SHA256SUMS
+      - name: Publish approved internal prerelease, never overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REPOSITORY" = SouthbagHQ/os ]
+          if gh api repos/SouthbagHQ/os/git/ref/tags/worker-input-kevin-ci1 >/dev/null 2>&1; then
+            echo 'Versioned inputs already exist. Refusing to overwrite.' >&2; exit 1
+          fi
+          cat > out/INPUTS.md <<'NOTES'
+          Public storage for internal ISO-build inputs. NOT an OS release: no ISO, no normal-image qualification claim. v0.1.1 remains the latest OS release.
+
+          Exact CI binary and corresponding source from source commit76edd50147e0c694303dafe6396b6b98f902ca13 and https://github.com/SouthbagHQ/os/actions/runs/42929287076. Binaryc28046a7 and source9d00e6cd are hash-verified, not rebuilt in this storage workflow. The package envelope is also hash-verified e75fe8db. Full hashes are in SHA256SUMS.
+
+          This exact binary passed separate graphical and lifecycle checks. Final normal-image ISO qualification is still required. These versioned inputs must not be replaced; use a new tag for changed inputs.
+          NOTES
+          gh release create worker-input-kevin-ci1 out/qualified-input/espanso-candidate out/qualified-input/source.tar.gz out/qualified-input/SHA256SUMS out/qualified-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb --repo SouthbagHQ/os --target "$GITHUB_SHA" --title 'Internal build inputs: Kevin worker ci1 (NOT an OS release)' --notes-file out/INPUTS.md --prerelease --latest=false
