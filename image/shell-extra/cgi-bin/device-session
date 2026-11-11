@@ -4,6 +4,10 @@ navbin=${SOUTHBAG_NAV_STATE_BIN:-/usr/local/bin/southbag-nav-state}
 state=${SOUTHBAG_STATE_DIR:-"${HOME:-/home/customer}/.local/share/southbag"}
 [ "${HTTP_ORIGIN:-}" = "http://127.0.0.1:8080" ] && [ "${REQUEST_METHOD:-}" = "POST" ] || { printf 'Status: 403\r\n\r\n'; exit 0; }
 case "${QUERY_STRING:-}" in
+ access-notice)
+  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+  if [ -f "$state/access-notice" ]; then printf '{"revoked":true}'; else printf '{"revoked":false}'; fi
+  ;;
  generation)
   file="$HOME/.local/share/southbag/device-session/generation"
   [ -f "$file" ] || { printf 'Status: 503\r\n\r\n'; exit 0; }

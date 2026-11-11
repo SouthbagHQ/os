@@ -21,9 +21,15 @@ async function startMock() {
   const code = `
 const { createServer } = require("node:http");
 const server = createServer((req, res) => {
-  if (req.url === "/api/auth/oauth2/userinfo" && req.headers.authorization === "Bearer ${TOKEN}") {
+  if (req.url === "/api/account/status" && req.headers.authorization === "Bearer frozen.token_abc-123~456") {
+    res.writeHead(200, {"Content-Type":"application/json"});res.end(JSON.stringify({sub:${JSON.stringify(SUB)},email:${JSON.stringify(EMAIL)},frozen:true}));return;
+  }
+  if (req.url === "/api/account/status" && req.headers.authorization === "Bearer missingflag.token_abc-123~456") {
+    res.writeHead(200, {"Content-Type":"application/json"});res.end(JSON.stringify({sub:${JSON.stringify(SUB)},email:${JSON.stringify(EMAIL)}}));return;
+  }
+  if (req.url === "/api/account/status" && req.headers.authorization === "Bearer ${TOKEN}") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ sub: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin", email_verified: true }));
+    res.end(JSON.stringify({ sub: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, name: "Kevin", email_verified: true, frozen: false }));
     return;
   }
   res.writeHead(401, { "Content-Type": "application/json" });
@@ -296,5 +302,13 @@ test('invalid or expired handoff expiry cannot replace a verified account',()=>{
  for(const expiresAt of [0,'later',Date.now()+90000000]) {
   const r=cgi({originHeader:SHELL_ORIGIN,body:{accessToken:TOKEN,expectedSubject:SUB,generation:'browser-era',expiresAt}});
   assert.equal(httpStatus(r.out),400,r.out);
+ }
+});
+
+test('frozen or missing explicit active status cannot bind or stage credentials',()=>{
+ for(const accessToken of ['frozen.token_abc-123~456','missingflag.token_abc-123~456']){
+  writeGen('freeze-era');rmSync(join(stateDir,'account'),{force:true});rmSync(join(stateDir,'device-session','browser-session.json'),{force:true});
+  const r=cgi({originHeader:'http://127.0.0.1:8080',body:{accessToken,expectedSubject:SUB,generation:'freeze-era',expiresAt:Date.now()+300000}});
+  assert.equal(httpStatus(r.out),403);assert.equal(existsSync(join(stateDir,'account')),false);assert.equal(existsSync(join(stateDir,'device-session','browser-session.json')),false);
  }
 });
