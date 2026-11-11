@@ -1,4 +1,5 @@
 import type { AppManifest } from "./types";
+import { mountSettings } from "./settings";
 
 /**
  * The full Southbag app set. Apps without a `mount` open a placeholder.
@@ -21,7 +22,7 @@ export const APPS: AppManifest[] = [
   { id: "lore", name: "Lore", url: "https://lore.southbag.cc/", size: { width: 700, height: 540 }, min: { width: 400, height: 320 } },
   { id: "kevin", name: "Kevin", size: { width: 520, height: 560 }, min: { width: 360, height: 320 } },
   { id: "browser", name: "Browser", size: { width: 900, height: 620 }, min: { width: 400, height: 300 } },
-  { id: "settings", name: "Settings", size: { width: 640, height: 560 }, min: { width: 400, height: 320 } },
+  { id: "settings", name: "Settings", mount: mountSettings, size: { width: 640, height: 560 }, min: { width: 400, height: 320 } },
 ];
 
 export function appById(id: string): AppManifest | undefined {
