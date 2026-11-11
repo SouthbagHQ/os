@@ -1,0 +1,62 @@
+name: Kevin source candidate
+
+# Evidence only. No worker execution, devices, secrets, release or activation.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packaging/*kevin*'
+      - 'tests/launcher/**'
+      - 'image/config/includes.chroot/usr/lib/southbag-launcher/**'
+      - '.github/workflows/kevin-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  source-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: debian:trixie
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install target-native build dependencies
+        shell: sh
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends bash git ca-certificates python3 python3-pytest curl patch build-essential pkg-config binutils libxkbcommon-dev libbz2-dev libssl-dev
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+      - name: Reconstruct exact corresponding source
+        run: |
+          mkdir -p out/kevin-candidate
+          python3 packaging/reconstruct-inject-source.py out/kevin-candidate/baseline.tar.gz
+          python3 packaging/reconstruct-kevin-source.py out/kevin-candidate/baseline.tar.gz out/kevin-candidate/source.tar.gz
+      - name: Test source feature matrix
+        env:
+          CARGO_BUILD_JOBS: 2
+          CARGO_TARGET_DIR: /tmp/kevin-target
+        run: bash packaging/build-kevin-source.sh out/kevin-candidate/source.tar.gz out/kevin-candidate test
+      - name: Build target-native worker
+        env:
+          CARGO_BUILD_JOBS: 2
+          CARGO_TARGET_DIR: /tmp/kevin-target
+        run: |
+          rustc --version >out/kevin-candidate/toolchain.txt
+          cargo --version >>out/kevin-candidate/toolchain.txt
+          gcc --version >>out/kevin-candidate/toolchain.txt
+          bash packaging/build-kevin-source.sh out/kevin-candidate/source.tar.gz out/kevin-candidate build
+          sha256sum out/kevin-candidate/source.tar.gz out/kevin-candidate/espanso-candidate >out/kevin-candidate/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kevin-source-candidate
+          path: |
+            out/kevin-candidate/source.tar.gz
+            out/kevin-candidate/espanso-candidate
+            out/kevin-candidate/espanso.needed.txt
+            out/kevin-candidate/toolchain.txt
+            out/kevin-candidate/SHA256SUMS
+          retention-days: 7
