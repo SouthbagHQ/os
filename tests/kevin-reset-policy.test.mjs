@@ -14,6 +14,7 @@ test('all-fields reset blocks before account/profile wipe if input stop fails, n
   writeFileSync(script,source.replace('policy=/etc/southbag/kevin-all-fields','policy='+policy));
   writeFileSync(policy,'kevin=all-fields\n');chmodSync(policy,0o644);
   writeFileSync(client,'#!/bin/sh\necho "$*" >> "$CLIENT_LOG"\ncase "$1" in current) echo "generation=7 state=inhibited";; inhibit) exit "${STOP_RESULT:-0}";; *) exit 3;; esac\n');chmodSync(client,0o755);
+  writeFileSync(log,'');
   const env={...process.env,SOUTHBAG_STATE_DIR:state,SOUTHBAG_DEVICE_INPUT_CLIENT:client,CLIENT_LOG:log};
   for(const mode of ['fail','pass']) {
    writeFileSync(join(state,'account'),'fixture\n');writeFileSync(join(root,'generation'),'fixture-generation\n');mkdirSync(join(root,'browser'),{recursive:true});writeFileSync(join(root,'browser','cookie'),'private');
