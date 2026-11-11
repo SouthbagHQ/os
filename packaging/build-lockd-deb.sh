@@ -70,7 +70,7 @@ Package: southbag-lockd
 Version: $version
 Architecture: amd64
 Maintainer: Southbag <os-updates@southbag.cc>
-Depends: libc6, systemd, libwayland-client0, libcairo2, libxkbcommon0, libjpeg62-turbo, swaylock
+Depends: libc6, systemd, libwayland-client0, libcairo2, libxkbcommon0, libjpeg62-turbo, swaylock, southbag-shell (>= $version)
 Section: misc
 Priority: optional
 Description: Southbag OS session lock

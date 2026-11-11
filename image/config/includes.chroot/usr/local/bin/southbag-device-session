@@ -301,7 +301,9 @@ case "${1:-}" in
   if [ -e "$state/access-revoked" ]; then
    # Only release the denial lock once every private writer and credential
    # is gone. The supervisor will show the clean login, never the old desktop.
-   "${SOUTHBAG_DEVICE_LOCK_STOP:-/usr/bin/pkill}" -TERM -u "$(id -u)" -x swaylock >/dev/null 2>&1 || true
+   # SIGUSR1 sends ext-session-lock unlock_and_destroy; TERM would leave
+   # the compositor permanently locked with a black surface.
+   "${SOUTHBAG_DEVICE_LOCK_STOP:-/usr/bin/pkill}" -USR1 -u "$(id -u)" -x swaylock >/dev/null 2>&1 || true
    rm -f "$state/access-revoked"
   fi
   ;;

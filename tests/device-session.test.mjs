@@ -467,3 +467,18 @@ test('the live supervisor checks the account while its shell is still running',(
  assert.match(source,/while systemctl --user is-active --quiet "\$unit"; do[\s\S]*southbag-device-session check/);
  assert.match(source,/next_check=\$\(\( \$\(date \+%s\) \+ 15 \)\)/);
 });
+
+test('denial lock is released with the compositor unlock protocol only after verified cleanup',()=>{
+ const {base,state,root,env,call}=setup();
+ try{
+  seedAccount(root,state);mkdirSync(join(root,'browser'));writeFileSync(join(root,'browser','cookie'),'private');
+  const unlock=join(base,'unlock-surface');
+  writeFileSync(unlock,'#!/bin/sh\nset -eu\n[ ! -e "'+join(state,'account')+'" ]\n[ ! -e "'+join(root,'browser')+'" ]\n[ ! -e "'+join(root,'generation')+'" ]\nprintf "%s\\n" "$@" > "'+join(base,'unlock-args')+'"\n',{mode:0o755});
+  env.SOUTHBAG_ACCOUNT_STATUS_BIN='/bin/false';env.SOUTHBAG_DEVICE_DENIAL_LOCK='/bin/true';
+  env.SOUTHBAG_DEVICE_LOCK_STOP=unlock;env.SOUTHBAG_DEVICE_SEAT_STOP='/bin/true';
+  assert.equal(call('check').status,0);
+  const args=readFileSync(join(base,'unlock-args'),'utf8').trim().split('\n');
+  assert.equal(args[0],'-USR1');assert.equal(args.at(-1),'swaylock');
+  assert.equal(existsSync(join(state,'access-revoked')),false);
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
