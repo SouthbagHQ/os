@@ -228,7 +228,7 @@ jobs:
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
           cat >>out/RELEASE.md <<'NOTES'
 
-          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.1 is included. The OS sign-in is handed to Browser without a second Browser login or consent round. The default lock now keeps its password prompt and indicator visible.
+          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.1 is included. The OS sign-in is handed to Browser without a second Browser login or consent round. The default lock now keeps its password prompt and indicator visible. Settings now contains disabled switches that show the configured analytics, automatic update, Kevin and local-download policies.
 
           Qualification limits: QEMU/TCG only, not physical hardware or KVM certification. Issue #23's reported KVM correction failure remains unconfirmed; terminal generation and reason diagnostics have been added. The worker binary and corresponding source are unchanged from v0.1.2; the ci2 package updates its launcher diagnostics. No signed-in Drive, physical keyboard read-EIO, held-modifier or camera claim is made.
           NOTES
@@ -271,7 +271,9 @@ jobs:
         with:
           name: southbag-os-iso
           path: release-input
-      - name: Verify and publish a new immutable version
+      # Keep the exact output private until its manual graphical checks finish.
+      # Publishing this draft is a separate final release step.
+      - name: Verify and stage a new immutable version
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -290,4 +292,4 @@ jobs:
           [ "${#source_assets[@]}" -gt 0 ] || { echo '::error::Missing corresponding worker source'; exit 1; }
           gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS "${source_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md
+            --draft --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md

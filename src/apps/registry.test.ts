@@ -33,7 +33,7 @@ describe("app registry", () => {
   test("the apps that are not built stay explicit placeholders", () => {
     expect(
       APPS.filter((app) => !app.mount && !app.url && app.id !== "browser").map((app) => app.id).sort(),
-    ).toEqual(["kevin", "settings", "terminal"]);
+    ).toEqual(["kevin", "terminal"]);
   });
 
   test("the launcher set is the eleven apps", () => {
