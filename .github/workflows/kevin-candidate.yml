@@ -35,6 +35,10 @@ jobs:
           mkdir -p out/kevin-candidate
           python3 packaging/reconstruct-inject-source.py out/kevin-candidate/baseline.tar.gz
           python3 packaging/reconstruct-kevin-source.py out/kevin-candidate/baseline.tar.gz out/kevin-candidate/source.tar.gz
+      - name: Test launcher without input devices
+        env:
+          PYTHONPATH: image/config/includes.chroot/usr/lib/southbag-launcher:tests/launcher
+        run: python3 -m pytest tests/launcher -q
       - name: Test source feature matrix
         env:
           CARGO_BUILD_JOBS: 2
