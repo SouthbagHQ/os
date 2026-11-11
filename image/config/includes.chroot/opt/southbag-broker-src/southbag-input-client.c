@@ -64,7 +64,7 @@ static int current_reply(const char *s) {
  const char *p=strchr(s+k,' '); if(!p || p-s-(int)k>18)return 0;
  char g[20];memcpy(g,s+k,(size_t)(p-s-k));g[p-s-k]=0;
  if(!decimal(g,0))return 0;
- return !strcmp(p," state=inhibited\n") || !strcmp(p," state=failed\n") || !strcmp(p," state=stopping\n");
+ return !strcmp(p," state=running\n") || !strcmp(p," state=inhibited\n") || !strcmp(p," state=failed\n") || !strcmp(p," state=stopping\n");
 }
 static int peer(int fd,uid_t *uid) {
  struct ucred cred; socklen_t n=sizeof cred;

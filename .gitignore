@@ -20,3 +20,7 @@ image/*.packages
 image/config/includes.chroot/tmp/southbag-inject-candidate.deb
 
 image/config/includes.chroot/tmp/southbag-package-build
+
+__pycache__/
+.pytest_cache/
+image/config/includes.chroot/tmp/southbag-kevin-candidate.deb

@@ -21,14 +21,20 @@ if [[ -n "${SOUTHBAG_INJECT_DEB:-}" || -n "${SOUTHBAG_INJECT_SOURCE:-}" ]]; then
 else
   bash "$repo/packaging/stage-inject-image.sh"
 fi
-trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb"; rm -rf "$here/config/includes.chroot/tmp/southbag-package-build"' EXIT
+# Normal image input is separate from the retained dormant diagnostic lane.
+rm -f "$here/config/includes.chroot/tmp/southbag-kevin-candidate.deb"
+if [[ -n "${SOUTHBAG_KEVIN_DEB:-}" || -n "${SOUTHBAG_KEVIN_SOURCE:-}" ]]; then
+  [[ -z "${SOUTHBAG_INJECT_DEB:-}" ]] || { echo 'Cannot mix worker lanes' >&2; exit 1; }
+  bash "$repo/packaging/stage-kevin-image.sh" "${SOUTHBAG_KEVIN_DEB:?}" "${SOUTHBAG_KEVIN_SOURCE:?}"
+fi
+trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb" "$here/config/includes.chroot/tmp/southbag-kevin-candidate.deb"; rm -rf "$here/config/includes.chroot/tmp/southbag-package-build"' EXIT
 
 # Set to a Southbag Browser release tag to include the standalone browser in
 # the image (website apps then open as its app windows; see
 # config/hooks/normal/0025-southbag-browser.hook.chroot). Must be a release
 # that contains app windows — v1.0.0 predates them. Empty keeps the image
 # cog-only.
-SOUTHBAG_BROWSER_VERSION=""
+SOUTHBAG_BROWSER_VERSION="v1.1.0"
 
 # The shell is ordinary files on disk, served over loopback at boot. This
 # directory is generated, so anything hand-written that belongs beside the

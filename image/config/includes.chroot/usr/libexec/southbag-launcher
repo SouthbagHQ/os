@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+import sys
+sys.path.insert(0, '/usr/lib/southbag-launcher')
+from southbag_launcher.__main__ import main
+sys.exit(main())

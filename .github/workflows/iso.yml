@@ -81,6 +81,21 @@ jobs:
           echo "SOUTHBAG_INJECT_SOURCE=$GITHUB_WORKSPACE/out/inject-input/source.tar.gz" >>"$GITHUB_ENV"
           echo "SOUTHBAG_INJECT_LANE=ci1" >>"$GITHUB_ENV"
 
+      - name: Download immutable hash-pinned kevin-source-candidate inputs
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/kevin-input
+          curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/espanso-candidate -o out/kevin-input/espanso-candidate
+          curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/source.tar.gz -o out/kevin-input/source.tar.gz
+          curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/southbag-inject_2.4.1%2Bsouthbag.2.kevin1.ci1_amd64.deb -o out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb
+          echo 'c28046a7573efedc8806e8ea70c60be8df3c4ff52101aa6264f929b4fc046f1d  out/kevin-input/espanso-candidate' | sha256sum --check
+          echo '9d00e6cd1b2917c63022664426c8f25e174644711882c1671894a60bb5e4d0d9  out/kevin-input/source.tar.gz' | sha256sum --check
+          echo 'e75fe8dba441f1543d618bd541e61eef660b788584f677a8189b74132b01cefe  out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb' | sha256sum --check
+          echo "SOUTHBAG_KEVIN_DEB=$GITHUB_WORKSPACE/out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb" >>"$GITHUB_ENV"
+          echo "SOUTHBAG_KEVIN_SOURCE=$GITHUB_WORKSPACE/out/kevin-input/source.tar.gz" >>"$GITHUB_ENV"
+
       - name: Build the ISO
         # bash invocation, not ./: file modes are not guaranteed to
         # survive publication through the web UI.
@@ -208,9 +223,15 @@ jobs:
       - name: Record release checksums and provenance
         if: github.event_name == 'workflow_dispatch' && inputs.publish_release && steps.smoke.outputs.ready == 'true'
         run: |
-          (cd out && sha256sum southbag-os.iso >SHA256SUMS)
+          (cd out && sha256sum southbag-os.iso southbag-inject_*_source.tar.gz >SHA256SUMS)
           printf 'Southbag OS ISO\n\nSource commit: %s\nBuild: %s/%s/actions/runs/%s\n\nUEFI live ISO. This build passed structural verification and booted to the running-shell readiness marker under QEMU. This does not certify physical hardware, sound, camera or backlight support.\n' \
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
+          cat >>out/RELEASE.md <<'NOTES'
+
+          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.0 is included.
+
+          Qualification limits: QEMU only, not physical hardware certification. Graphical plain/password/native-lock correction and reset cleanup passed on the qualification ISO. Device-removal testing used a USB tablet and monitor sequence-gap shutdown, not physical keyboard read-EIO. Held Shift was sampled at startup, but no final-image held-modifier pixel claim is made. No signed-in Drive or new Electron-window proof is claimed. Native password tests used a restored local synthetic verifier.
+          NOTES
 
       - name: Report size
         if: always()
@@ -226,6 +247,7 @@ jobs:
             out/SHA256SUMS
             out/RELEASE.md
             out/southbag-inject_*_source.tar.gz
+            out/kevin-input/southbag-inject_*_amd64.deb
             serial.log
           if-no-files-found: error
 
@@ -262,6 +284,10 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             echo '::error::Tag already exists. Select a new version.'; exit 1;
           fi
-          gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS \
+          # Corresponding source accompanies every distributed worker image.
+          shopt -s nullglob
+          source_assets=(southbag-inject_*_source.tar.gz)
+          [ "${#source_assets[@]}" -gt 0 ] || { echo '::error::Missing corresponding worker source'; exit 1; }
+          gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS "${source_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md
