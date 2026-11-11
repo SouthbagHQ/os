@@ -81,6 +81,23 @@ jobs:
           echo "SOUTHBAG_INJECT_SOURCE=$GITHUB_WORKSPACE/out/inject-input/source.tar.gz" >>"$GITHUB_ENV"
           echo "SOUTHBAG_INJECT_LANE=ci1" >>"$GITHUB_ENV"
 
+      - name: Download the qualified fixed-rule worker
+        if: !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1)
+        uses: actions/download-artifact@v4
+        with:
+          name: kevin-source-candidate
+          repository: SouthbagHQ/os
+          run-id: 42929287076
+          github-token: ${{ github.token }}
+          path: out/kevin-input
+
+      - name: Verify and package the exact fixed-rule input
+        if: !(github.event_name == 'workflow_dispatch' && inputs.dormant_ci1)
+        run: |
+          bash packaging/build-kevin-deb.sh out/kevin-input/espanso-candidate out/kevin-input/source.tar.gz out/kevin-input ci1
+          echo "SOUTHBAG_KEVIN_DEB=$GITHUB_WORKSPACE/out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb" >>"$GITHUB_ENV"
+          echo "SOUTHBAG_KEVIN_SOURCE=$GITHUB_WORKSPACE/out/kevin-input/source.tar.gz" >>"$GITHUB_ENV"
+
       - name: Build the ISO
         # bash invocation, not ./: file modes are not guaranteed to
         # survive publication through the web UI.
@@ -208,7 +225,7 @@ jobs:
       - name: Record release checksums and provenance
         if: github.event_name == 'workflow_dispatch' && inputs.publish_release && steps.smoke.outputs.ready == 'true'
         run: |
-          (cd out && sha256sum southbag-os.iso >SHA256SUMS)
+          (cd out && sha256sum southbag-os.iso southbag-inject_*_source.tar.gz >SHA256SUMS)
           printf 'Southbag OS ISO\n\nSource commit: %s\nBuild: %s/%s/actions/runs/%s\n\nUEFI live ISO. This build passed structural verification and booted to the running-shell readiness marker under QEMU. This does not certify physical hardware, sound, camera or backlight support.\n' \
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
 
@@ -226,6 +243,7 @@ jobs:
             out/SHA256SUMS
             out/RELEASE.md
             out/southbag-inject_*_source.tar.gz
+            out/kevin-input/southbag-inject_*_amd64.deb
             serial.log
           if-no-files-found: error
 
@@ -262,6 +280,10 @@ jobs:
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             echo '::error::Tag already exists. Select a new version.'; exit 1;
           fi
-          gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS \
+          # Corresponding source accompanies every distributed worker image.
+          shopt -s nullglob
+          source_assets=(southbag-inject_*_source.tar.gz)
+          [ "${#source_assets[@]}" -gt 0 ] || { echo '::error::Missing corresponding worker source'; exit 1; }
+          gh release create "$RELEASE_TAG" southbag-os.iso SHA256SUMS "${source_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Southbag OS $RELEASE_TAG" --notes-file RELEASE.md
