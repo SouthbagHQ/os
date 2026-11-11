@@ -2,14 +2,20 @@
 import pathlib,subprocess,tempfile,unittest,re,os,json
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 class DarkProvisioning(unittest.TestCase):
- def test_unit_is_canonical_and_hard_denied(self):
+ def test_unit_is_root_launcher_with_child_grants_only(self):
   s=(ROOT/'image/config/includes.chroot/etc/systemd/system/southbag-espanso.service').read_text()
-  for line in ['User=southbag-inject','Group=southbag-inject','ExecCondition=/bin/false','Restart=no','DevicePolicy=closed','KillMode=control-group','CapabilityBoundingSet=','AmbientCapabilities=','Environment=ESPANSO_RUNTIME_DIR=/var/lib/southbag-inject','Environment=ESPANSO_PACKAGE_DIR=/etc/southbag/espanso/packages','UnsetEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR']:
-   self.assertIn(line,s.splitlines())
-  self.assertNotIn('DeviceAllow=',s)
-  self.assertNotIn('[Install]',[x for x in s.splitlines() if not x.startswith('#')]);self.assertNotIn('SupplementaryGroups=',s)
-  self.assertNotIn('southbag-inject.service',(ROOT/'image/config/includes.chroot/usr/local/sbin/southbag-input-broker').read_text())
-  self.assertIn('southbag-espanso.service',(ROOT/'image/config/includes.chroot/usr/local/sbin/southbag-input-broker').read_text())
+  code=[x for x in s.splitlines() if not x.startswith('#')]
+  for line in ['Restart=no','DevicePolicy=closed','KillMode=control-group','AmbientCapabilities=','NoNewPrivileges=yes','RuntimeDirectoryPreserve=yes','CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_OVERRIDE CAP_KILL']:
+   self.assertIn(line,code)
+  self.assertNotIn('User=customer',code);self.assertNotIn('Group=input',code)
+  self.assertNotIn('SupplementaryGroups=',s)
+  self.assertIn('/usr/libexec/southbag-launcher run',s)
+  self.assertIn('--uid southbag-inject --gid southbag-inject',s)
+  self.assertNotIn('DeviceAllow=', '\n'.join(code))
+  self.assertNotIn('WantedBy=', '\n'.join(code))
+  broker=(ROOT/'image/config/includes.chroot/usr/local/sbin/southbag-input-broker').read_text()
+  self.assertIn('southbag-espanso.service',broker)
+  self.assertIn('boot-start',broker)
  def test_identity_has_no_device_or_enable_grant(self):
   p=ROOT/'image/config/hooks/normal/0012-inject-user.hook.chroot';s=p.read_text()
   code='\n'.join(x for x in s.splitlines() if not x.startswith('#'))
@@ -22,7 +28,7 @@ class DarkProvisioning(unittest.TestCase):
   for p in (ROOT/'image/config/hooks').rglob('*'):
    if p.is_file():
     s=p.read_text()
-    for bad in ['enable southbag-espanso','start southbag-espanso','enable southbag-inject','start southbag-inject']:
+    for bad in ['start southbag-espanso','enable southbag-inject','start southbag-inject']:
      self.assertNotIn(bad,s,str(p))
  def test_unknown_binary_fails_before_package(self):
   with tempfile.TemporaryDirectory() as d:

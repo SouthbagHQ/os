@@ -1,0 +1,10 @@
+#!/bin/sh
+# Normal-image worker activation follows account setup and exact package install.
+set -eu
+package=/tmp/southbag-kevin-candidate.deb
+[ -f "$package" ] || exit 0
+[ "$(sha256sum "$package" | cut -d' ' -f1)" = e75fe8dba441f1543d618bd541e61eef660b788584f677a8189b74132b01cefe ] || { echo 'Unrecognized Kevin image input' >&2; exit 1; }
+dpkg -i "$package"
+rm -f "$package"
+# Enable only for next boot, never start a device reader in the build chroot.
+systemctl enable southbag-espanso-boot.service
