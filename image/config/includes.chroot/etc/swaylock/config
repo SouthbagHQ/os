@@ -15,3 +15,11 @@ line-color=050608
 separator-color=050608
 text-color=e8e6df
 font=DejaVu Sans
+# Keep the real default lock usable before, during and after typing.
+# The centered 640x480 prompt leaves the middle clear for the indicator.
+image=/usr/share/southbag-lock/prompt.png
+scaling=center
+indicator-idle-visible
+indicator-caps-lock
+show-failed-attempts
+ignore-empty-password

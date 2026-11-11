@@ -408,3 +408,21 @@ def test_setup_clears_barrier_only_across_boots(tmp_path):
     assert not barrier.exists()
     assert store.written  # manifest persisted through the store seam
     assert "DeviceAllow=/dev/input/event3 r" in (tmp_path / "20-devices.conf").read_text()
+
+
+def test_terminal_reason_is_logged_even_when_barrier_persist_succeeds(tmp_path, capsys):
+    launcher = Launcher(_config(tmp_path), boot_id_reader=lambda: "test-boot")
+    launcher._mark_terminal(42, "uevent sequence gap: 12 -> 14")
+    assert "terminal generation=42 reason=uevent sequence gap: 12 -> 14" in capsys.readouterr().err
+    assert launcher._read_barrier()["reason"] == "uevent sequence gap: 12 -> 14"
+
+
+def test_terminal_reason_is_logged_when_barrier_write_fails(tmp_path, capsys, monkeypatch):
+    launcher = Launcher(_config(tmp_path))
+    def fail(*_args):
+        raise OSError("read-only")
+    monkeypatch.setattr(launcher, "_persist_barrier", fail)
+    launcher._mark_terminal(43, "approved keyboard removed")
+    text = capsys.readouterr().err
+    assert "terminal generation=43 reason=approved keyboard removed" in text
+    assert "terminal barrier rewrite failed" in text

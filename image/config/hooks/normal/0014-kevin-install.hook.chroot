@@ -3,7 +3,7 @@
 set -eu
 package=/tmp/southbag-kevin-candidate.deb
 [ -f "$package" ] || exit 0
-[ "$(sha256sum "$package" | cut -d' ' -f1)" = e75fe8dba441f1543d618bd541e61eef660b788584f677a8189b74132b01cefe ] || { echo 'Unrecognized Kevin image input' >&2; exit 1; }
+[ "$(sha256sum "$package" | cut -d' ' -f1)" = bdea3447ab3d0b69157cdf33d2ba8e014971973c114634a5ebf6803261071951 ] || { echo 'Unrecognized Kevin image input' >&2; exit 1; }
 dpkg -i "$package"
 rm -f "$package"
 # Enable only for next boot, never start a device reader in the build chroot.

@@ -278,3 +278,23 @@ test("mismatched subject fence preserves an existing valid binding", () => {
   assert.equal(httpStatus(r.out), 409);
   assert.equal(readFileSync(join(stateDir, "account"), "utf8"), `${SUB}\t${EMAIL}\n`);
 });
+
+test('verified shell session stages a private Browser handoff and clear removes it',()=>{
+ writeGen('browser-era');
+ const expiresAt=Date.now()+3600000;
+ let r=cgi({originHeader:SHELL_ORIGIN,body:{accessToken:TOKEN,expectedSubject:SUB,generation:'browser-era',expiresAt}});
+ assert.equal(httpStatus(r.out),200,r.out);
+ const file=join(stateDir,'device-session','browser-session.json');
+ assert.deepEqual(JSON.parse(readFileSync(file,'utf8')),{generation:'browser-era',subject:SUB,accessToken:TOKEN,expiresAt});
+ assert.equal(statSync(file).mode&0o777,0o600);
+ writeFileSync(join(stateDir,'device-session','browser-handoff.json'),'private fixture');
+ r=cgi({originHeader:SHELL_ORIGIN,body:{clear:true,generation:'browser-era'}});
+ assert.equal(httpStatus(r.out),200);assert.ok(!existsSync(file));assert.ok(!existsSync(join(stateDir,'device-session','browser-handoff.json')));
+});
+test('invalid or expired handoff expiry cannot replace a verified account',()=>{
+ writeGen('browser-era');
+ for(const expiresAt of [0,'later',Date.now()+90000000]) {
+  const r=cgi({originHeader:SHELL_ORIGIN,body:{accessToken:TOKEN,expectedSubject:SUB,generation:'browser-era',expiresAt}});
+  assert.equal(httpStatus(r.out),400,r.out);
+ }
+});

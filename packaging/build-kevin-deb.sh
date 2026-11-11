@@ -5,6 +5,7 @@ set -euo pipefail
 binary=${1:?}; source=${2:?}; out=${3:?}; lane=${4:-local-v5}
 case "$lane" in
  local-v5) binary_hash=47045bd3cfd631ee0f33a362e74676e1ae813f329937390d23cc684b84c0ffcf; version=2.4.1+southbag.2.kevin1 ;;
+ ci2) binary_hash=c28046a7573efedc8806e8ea70c60be8df3c4ff52101aa6264f929b4fc046f1d; version=2.4.1+southbag.2.kevin1.ci2 ;;
  ci1) binary_hash=c28046a7573efedc8806e8ea70c60be8df3c4ff52101aa6264f929b4fc046f1d; version=2.4.1+southbag.2.kevin1.ci1 ;;
  *) echo "Unknown candidate lane" >&2; exit 1 ;;
 esac

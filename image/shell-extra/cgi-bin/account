@@ -99,12 +99,22 @@ current=$([ -f "$root/generation" ] && cat "$root/generation" || true)
 
 if printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
  /usr/local/bin/southbag-analytics account_cleared >/dev/null 2>&1 || true
- rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+ rm -f "$state/account" "$state/twofa-cookie" "$state/locked" "$root/browser-session.json" "$root/browser-handoff.json"
  "$navbin" account_cleared || true
  printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n{"recorded":false}'
  exit 0
 fi
 
+# Only the verified shell login may supply a Browser handoff. Old callers can
+# still bind the lock, but must not leave stale credentials from an older login.
+if printf '%s' "$body" | jq -e 'has("expiresAt")' >/dev/null 2>&1; then
+ printf '%s' "$body" | jq -e '.expiresAt | type == "number" and . > (now * 1000) and . <= ((now + 86400) * 1000)' >/dev/null 2>&1 || fail 400 "invalid session expiry"
+ ( umask 077; printf '%s' "$body" | jq -c --arg generation "$current" --arg subject "$sub" '{generation:$generation,subject:$subject,accessToken,expiresAt}' > "$root/.browser-session.tmp" ) || fail 500 "session handoff failed"
+ mv -f "$root/.browser-session.tmp" "$root/browser-session.json" || fail 500 "session handoff failed"
+else
+ rm -f "$root/browser-session.json"
+fi
+rm -f "$root/browser-handoff.json"
 ( umask 077; printf '%s\t%s\n' "$sub" "$email" > "$state/account" )
 "$navbin" account_bound || true
 /usr/local/bin/southbag-analytics account_bound >/dev/null 2>&1 || true

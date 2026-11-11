@@ -164,16 +164,23 @@ test('ancestor holding an open fd under the root still fails reset closed',()=>{
  }finally{rmSync(base,{recursive:true,force:true})}
 });
 test('launch env chain: SOUTHBAG_OS reaches the scoped app and the launch CGI sets it',()=>{
- const {base,state,root,call}=setup();
+ const {base,state,root,env,call}=setup();
  try{
   seedAccount(root,state);
+  const helper=join(base,'handoff-helper');
+  writeFileSync(helper,`#!/bin/sh
+test -f "$1/generation" || exit 1
+printf prepared >"$1/prepared"
+`);chmodSync(helper,0o755);
+  env.SOUTHBAG_BROWSER_SESSION_HELPER=helper;
   const marker=join(base,'marker');
   // Mirror the production CGI invocation: manager launch <app> env SOUTHBAG_OS=1 <cmd>.
   const r=call('launch','browser','env','SOUTHBAG_OS=1','sh','-c','printf \'%s:%s\' "$SOUTHBAG_OS" "$SOUTHBAG_DEVICE_GENERATION" >"$1"','sh',marker);
-  assert.equal(r.status,0,'launch ok: '+r.stderr);
+  assert.equal(r.status,0,'launch ok: '+r.stderr);assert.ok(existsSync(join(root,'prepared')),'handoff prepared before launch');
   const deadline=Date.now()+3000;
   while(!existsSync(marker)&&Date.now()<deadline) spawnSync('sh',['-c','sleep .1']);
   assert.equal(readFileSync(marker,'utf8'),'1:one','SOUTHBAG_OS and device generation reach the scoped process env');
+  env.SOUTHBAG_BROWSER_SESSION_HELPER='/bin/false';assert.notEqual(call('launch','browser','env','SOUTHBAG_OS=1','true').status,0,'handoff failure blocks Browser launch');
   // Regression assert: every browser launch line in the production CGI must
   // inject SOUTHBAG_OS=1 through the manager. A launch without it silently
   // bypasses the Browser device guard and download policy.

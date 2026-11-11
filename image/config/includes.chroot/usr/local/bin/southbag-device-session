@@ -168,12 +168,19 @@ case "${1:-}" in
    # so a stale milestone can never masquerade as this session's state.
    rm -f "$state/nav-state"
   fi
-  start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --bg-color='#050608' http://127.0.0.1:8080/
+  start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --cookie-jar="sqlite:$root/identity-cookies.sqlite" --bg-color='#050608' http://127.0.0.1:8080/
   ;;
  launch)
   [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] && [ -f "$root/generation" ] || exit 1
   name=$2; shift 2
   case "$name" in browser|files|banking|office|chat|code|branches|lore|terminal|kevin|settings) ;; *) exit 1 ;; esac
+  # Prepare only for the actual Browser launch, under the same lock as reset.
+  for arg do
+   if [ "$arg" = SOUTHBAG_OS=1 ]; then
+    "${SOUTHBAG_BROWSER_SESSION_HELPER:-/usr/local/bin/southbag-browser-session}" "$root" || exit 1
+    break
+   fi
+  done
   start_scope "app-$name-$$" env SOUTHBAG_DEVICE_GENERATION="$(cat "$root/generation")" XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$@"
   ;;
  recovery)

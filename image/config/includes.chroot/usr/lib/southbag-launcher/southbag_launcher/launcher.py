@@ -365,6 +365,10 @@ class Launcher:
             pass
 
     def _mark_terminal(self, generation, reason):
+        # A persisted barrier is not visible in journalctl. Always explain why
+        # enforcement stopped, including ordinary topology/worker failures.
+        print("southbag launcher: terminal generation=%s reason=%s"
+              % (generation, reason), file=sys.stderr, flush=True)
         try:
             self._persist_barrier("terminal", generation, reason)
         except OSError as exc:
