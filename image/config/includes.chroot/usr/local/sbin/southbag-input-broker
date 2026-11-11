@@ -1,15 +1,12 @@
 #!/bin/sh
 # Root-owned lifecycle broker for the dedicated expander (input injection)
-# worker. Owns the worker's inhibit state and stop barrier. There is NO
-# activation path here on purpose.
+# worker. Owns its state and verified stop barrier. Only boot-start may start
+# the normal-image worker, once per boot and never through customer IPC.
 #
-# Why no start verb: starting the worker requires a one-shot protected
-# authorization that only broker-owned verification of an account proof may
-# create (see the reviewed control-path design). Caller uid equality, a
-# customer-written note, a helper's exit code or IPC bytes are not that
-# authority. Until a broker-owned verifier exists, every start/authorize
-# verb is refused and the worker stays inhibited from boot. A partial
-# broker that exposes activation without that authority must never ship.
+# Root boot-start is a single consumed attempt, not account authentication.
+# The product enforces ALL fields including credentials on normal images.
+# No customer message, credential callback or note can request a start.
+# Dormant images never invoke boot-start and retain their hard-denial unit.
 #
 # What unprivileged callers may do: request inhibit with the current
 # generation. That can only stop and inhibit the worker - denial of service
@@ -111,6 +108,25 @@ want_gen() {
 }
 
 case "${1:-}" in
+ boot-start)
+  # Root boot authority only. The socket transport intentionally cannot
+  # request this verb. Consume the attempt before asking systemd to start;
+  # neither terminal loss nor a failed attempt may rearm in this boot.
+  [ "$ALLOW_NONROOT" = 1 ] || [ "$(id -u)" = 0 ] || { echo "boot-start is root-only" >&2; exit 1; }
+  g=$(generation)
+  case "$g" in ''|0|*[!0-9]*) echo "unknown boot generation" >&2; exit 1;; esac
+  [ "$(get_state)" = inhibited ] || { echo "boot generation not inhibited" >&2; exit 1; }
+  (set -C; printf '%s\n' "$g" > "$STATE/boot-start-consumed") 2>/dev/null || { echo "boot start already consumed" >&2; exit 1; }
+  stop_barrier || exit 1
+  deadline=$(awk -v now="$(monotonic)" -v seconds="$STOP_DEADLINE" 'BEGIN { printf "%.2f",now+seconds }')
+  if ctl start "$UNIT" && unit_active; then
+   set_state running
+  else
+   stop_barrier || true
+   set_state failed
+   exit 1
+  fi
+  ;;
  begin-generation)
   # Root-owned lifecycle authority only; no public generation setter.
   [ "$ALLOW_NONROOT" = 1 ] || [ "$(id -u)" = 0 ] || { echo "begin-generation is root-only" >&2; exit 1; }
@@ -121,7 +137,7 @@ case "${1:-}" in
   printf '%s\n' "$g"
   ;;
  inhibit)
-  # OK return is the prerequisite for presenting a credential prompt.
+  # OK proves the complete worker unit stopped and its cgroup empty.
   want_gen "$@"
   stop_barrier
   ;;
@@ -135,9 +151,8 @@ case "${1:-}" in
   printf 'generation=%s state=%s\n' "$(generation)" "$(get_state)"
   ;;
  *)
-  # Deliberately no start/authorize-unlock verb: no protected auth
-  # authority exists to grant one.
-  echo "usage: southbag-input-broker begin-generation|inhibit GEN|status GEN|current" >&2
+  # No customer start/authorize-unlock/restart verb.
+  echo "usage: southbag-input-broker boot-start|begin-generation|inhibit GEN|status GEN|current" >&2
   exit 2
   ;;
 esac

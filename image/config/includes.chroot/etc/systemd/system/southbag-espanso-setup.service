@@ -1,0 +1,15 @@
+[Unit]
+Description=Southbag Kevin boot device manifest and exact grants
+After=systemd-udev-settle.service southbag-input-broker.service
+Requires=southbag-input-broker.service
+Before=southbag-espanso-boot.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/install -d -o southbag-inject -g southbag-inject -m 0700 /var/lib/southbag-inject
+ExecStart=/sbin/modprobe uinput
+ExecStart=/usr/libexec/southbag-launcher setup --manifest /run/southbag-kevin/manifest.json --runtime-dir /run/southbag-kevin --dropin /run/systemd/system/southbag-espanso.service.d/20-devices.conf
+ExecStartPost=/bin/systemctl daemon-reload
+RuntimeDirectory=southbag-kevin
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes

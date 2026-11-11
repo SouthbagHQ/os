@@ -24,6 +24,19 @@ pgrep -x southbag-lockd >/dev/null 2>&1 && exit 0
 # re-engages, southbag-unlock clears the flag on a verified unlock). In the
 # customer's home rather than /run so this also holds across a reboot on an
 # installed system; on a live boot home is ephemeral anyway.
+# Normal Kevin images deliberately enforce the fixed rule in ALL fields,
+# including credentials. The root-owned package policy selects that product
+# behavior. Older/dormant images retain the verified pre-prompt stop barrier.
+# A customer-written note or environment variable cannot select this policy.
+policy=/etc/southbag/kevin-all-fields
+all_fields=0
+if [ -f "$policy" ] && [ ! -L "$policy" ]; then
+ case "$(stat -c '%u:%a' "$policy" 2>/dev/null)" in
+  0:644|0:444)
+   if grep -qx 'kevin=all-fields' "$policy"; then all_fields=1; fi ;;
+ esac
+fi
+if [ "$all_fields" != 1 ]; then
 # The expander worker must be stopped and its cgroup empty before any
 # credential prompt appears. The broker's inhibit is the stop barrier; an
 # OK return is the prerequisite for the prompt. A failed barrier fails
@@ -43,6 +56,8 @@ gen=$("$broker" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1
 [ -n "$gen" ] || exit 1
 [ "$gen" != 0 ] || exit 1
 "$broker" inhibit "$gen" || exit 1
+
+fi
 
 mkdir -p "$state"
 : > "$state/locked"

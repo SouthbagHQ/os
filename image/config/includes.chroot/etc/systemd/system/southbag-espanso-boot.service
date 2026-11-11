@@ -1,0 +1,11 @@
+[Unit]
+Description=Southbag Kevin single boot start
+Requires=southbag-espanso-setup.service southbag-input-broker.service
+After=southbag-espanso-setup.service southbag-input-broker.service
+Before=systemd-user-sessions.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/southbag-input-broker boot-start
+[Install]
+WantedBy=multi-user.target

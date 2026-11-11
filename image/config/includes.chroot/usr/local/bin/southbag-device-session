@@ -208,6 +208,23 @@ case "${1:-}" in
   if [ -z "$expected" ] || [ ! -f "$root/generation" ] || [ "$(cat "$root/generation")" != "$expected" ]; then echo "reset: generation mismatch" >&2; exit 1; fi
   touch "$root/blocked"
   sync -f "$root/blocked" 2>/dev/null || true
+  # The boot-global all-fields worker cannot outlive session teardown. Only
+  # root boot setup may start a fresh generation. Customer IPC is stop-only:
+  # after sign-out Kevin remains stopped until reboot, never rearmed by a
+  # customer-controlled marker or credential callback.
+  policy=/etc/southbag/kevin-all-fields
+  if [ -f "$policy" ] && [ ! -L "$policy" ]; then
+   case "$(stat -c '%u:%a' "$policy" 2>/dev/null)" in
+    0:644|0:444)
+     if grep -qx 'kevin=all-fields' "$policy"; then
+      client=${SOUTHBAG_DEVICE_INPUT_CLIENT:-/usr/local/bin/southbag-input-client}
+      [ -x "$client" ] || { echo "reset: input stop client unavailable" >&2; exit 1; }
+      gen=$("$client" current 2>/dev/null | sed -n 's/^generation=\([0-9][0-9]*\).*/\1/p')
+      [ -n "$gen" ] && [ "$gen" != 0 ] || { echo "reset: unknown input generation" >&2; exit 1; }
+      "$client" inhibit "$gen" || { echo "reset: input stop barrier failed" >&2; exit 1; }
+     fi ;;
+   esac
+  fi
   # Account removed first under lock: Browser guard stops accepting callbacks.
   rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
   # The journey-phase record belongs to the era being torn down: clear it

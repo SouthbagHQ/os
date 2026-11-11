@@ -1,44 +1,80 @@
+# Dedicated root launcher supervises the unprivileged fixed-rule worker.
+# The stop-only broker verifies this entire cgroup empty before reset.
 [Unit]
-Description=Southbag dedicated inject-only worker (activation unavailable)
-After=southbag-input-broker.service
-Requires=southbag-input-broker.service
+Description=Southbag espanso Kevin worker (launcher-supervised)
+Documentation=file:/usr/share/doc/southbag-inject/kevin-runtime.md
+# Start authority lives solely with the OS worker's root boot-start path
+# (after begin-generation). No start is exposed over the customer IPC.
+Requires=southbag-espanso-setup.service
+After=southbag-espanso-setup.service
+# Session reset is a lifecycle barrier: the broker stops this unit.
+# A terminal or consumed generation never rearms itself (launcher-side
+# generation barrier file, cleared only by a new boot's setup).
 
 [Service]
 Type=exec
-User=southbag-inject
-Group=southbag-inject
-# Hard denial, not a caller-controlled marker. Replace only after the trusted
-# broker verifier, per-physical-device grants and hotplug/modifier gates pass.
-# No shell/client/root-owned note is an authentication proof.
-ExecCondition=/bin/false
-ExecStart=/opt/southbag/bin/espanso worker
-Environment=HOME=/var/lib/southbag-inject
-Environment=ESPANSO_CONFIG_DIR=/etc/southbag/espanso
-Environment=ESPANSO_PACKAGE_DIR=/etc/southbag/espanso/packages
-Environment=ESPANSO_RUNTIME_DIR=/var/lib/southbag-inject
-UnsetEnvironment=WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
-Environment=XDG_CACHE_HOME=/var/lib/southbag-inject/cache
-Environment=XDG_DATA_HOME=/var/lib/southbag-inject/data
-StateDirectory=southbag-inject
-StateDirectoryMode=0700
-UMask=0077
+# Restart lives in [Service]: no automatic restart, ever.
+Restart=no
+ExecStopPost=/bin/rm -f /run/systemd/system/southbag-espanso.service.d/20-devices.conf
+# The launcher runs as root ONLY to read the root-only manifest, open the
+# exact device nodes, and mint grants. The worker child is exec'd under
+# the dedicated UID/GID with no capabilities (see launcher.drop_privileges).
+ExecStart=/usr/libexec/southbag-launcher run \
+    --manifest /run/southbag-kevin/manifest.json \
+    --runtime-dir /run/southbag-kevin \
+    --uid southbag-inject --gid southbag-inject \
+    -- /opt/southbag/bin/espanso --config_dir /etc/southbag/espanso --package_dir /etc/southbag/espanso/packages --runtime_dir /var/lib/southbag-inject worker
+
+# Device mediation: closed policy; the EXACT approved nodes come from the
+# generated drop-in southbag-espanso.service.d/20-devices.conf (per-device
+# "DeviceAllow=/dev/input/eventN r" plus "DeviceAllow=/dev/uinput w").
+# No char-input wildcard anywhere. Without the drop-in the launcher cannot
+# open any device and denies startup.
 DevicePolicy=closed
-# No DeviceAllow entries while dormant. Both the cgroup device filter and
-# dedicated-identity DAC deny input access. Future per-physical-device grants
-# need separate review; a broad char-input rule must not replace that gate.
+
+# Capabilities: the launcher needs exactly these, and only until the child
+# drops them:
+#   CAP_SETUID/CAP_SETGID  - exec the worker as the dedicated UID/GID
+#   CAP_SETPCAP            - drop the bounding set in the child pre-exec
+#   CAP_DAC_OVERRIDE       - open root-only manifest and input nodes
+# The worker child itself holds no capabilities at all.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_OVERRIDE CAP_KILL
+AmbientCapabilities=
 NoNewPrivileges=yes
+SecureBits=noroot-locked
+
+# No network or IPC widening: the worker contract has no IPC socket, no
+# clipboard/compositor probing, no dynamic renderers. AF_NETLINK is the
+# launcher's uevent monitor; AF_UNIX is systemd bookkeeping.
+# NOTE (qualification): PrivateNetwork=yes is intentionally NOT set. The
+# uevent monitor must receive kobject uevents; whether uevent delivery
+# reaches sockets in a private netns is a real-device qualification item.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 ProtectSystem=strict
 ProtectHome=yes
-PrivateTmp=yes
-RestrictAddressFamilies=AF_UNIX
-RestrictNamespaces=yes
-LockPersonality=yes
-ProtectKernelLogs=yes
+ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
+PrivateTmp=yes
+RuntimeDirectory=southbag-kevin
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ReadWritePaths=/var/lib/southbag-inject
+
+# Bounded, broker-verified stop: SIGTERM to the launcher, which signals the
+# worker over SOUTHBAG_MONITOR_FD semantics only on terminal loss; on a
+# broker stop the launcher forwards SIGTERM to the child FIRST (a monitor
+# pipe hangup after a still-running worker would read as monitor loss).
+# The launcher's own bounded cleanup is 3s TERM + 3s KILL; the unit allows
+# 8s before the final cgroup-wide SIGKILL. KillMode=control-group is what
+# makes the stop broker's cgroup-empty verification complete.
 KillMode=control-group
-TimeoutStopSec=15
-Restart=no
-# No [Install]: no boot enablement, dependency activation or restart policy.
+KillSignal=SIGTERM
+TimeoutStopSec=8
+FinalKillSignal=SIGKILL
+
+[Install]
+# Not wanted by any target: start authority is the OS worker's boot path.
