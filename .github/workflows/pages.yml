@@ -57,8 +57,8 @@ jobs:
           # Pin a Southbag Browser release tag to publish the browser
           # package; keep it identical to SOUTHBAG_BROWSER_VERSION in
           # image/build.sh. Empty ships no browser package. v1.0.0 predates
-          # app windows and must never be pinned. v1.1.0 is qualified.
-          SOUTHBAG_BROWSER_VERSION: "v1.1.0"
+          # app windows and must never be pinned. v1.1.1 is qualified.
+          SOUTHBAG_BROWSER_VERSION: "v1.1.1"
         run: |
           bun run build:device
           mkdir -p out/pool dist/apt

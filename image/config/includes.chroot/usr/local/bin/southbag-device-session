@@ -168,12 +168,19 @@ case "${1:-}" in
    # so a stale milestone can never masquerade as this session's state.
    rm -f "$state/nav-state"
   fi
-  start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --bg-color='#050608' http://127.0.0.1:8080/
+  start_scope shell env XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$COG" --gapplication-app-id=cc.southbag.shell --platform=wl --cookie-jar="sqlite:$root/identity-cookies.sqlite" --bg-color='#050608' http://127.0.0.1:8080/
   ;;
  launch)
   [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] && [ -f "$root/generation" ] || exit 1
   name=$2; shift 2
   case "$name" in browser|files|banking|office|chat|code|branches|lore|terminal|kevin|settings) ;; *) exit 1 ;; esac
+  # Prepare only for the actual Browser launch, under the same lock as reset.
+  for arg do
+   if [ "$arg" = SOUTHBAG_OS=1 ]; then
+    "${SOUTHBAG_BROWSER_SESSION_HELPER:-/usr/local/bin/southbag-browser-session}" "$root" || exit 1
+    break
+   fi
+  done
   start_scope "app-$name-$$" env SOUTHBAG_DEVICE_GENERATION="$(cat "$root/generation")" XDG_DATA_HOME="$root/wpe-data" XDG_CACHE_HOME="$root/wpe-cache" "$@"
   ;;
  recovery)
@@ -227,6 +234,7 @@ case "${1:-}" in
   fi
   # Account removed first under lock: Browser guard stops accepting callbacks.
   rm -f "$state/account" "$state/twofa-cookie" "$state/locked"
+  rm -f "$root/browser-session.json" "$root/browser-handoff.json" "$root/.browser-session.tmp" "$root"/.browser-handoff-*
   # The journey-phase record belongs to the era being torn down: clear it
   # with the account note, under the same lock, so a dead era's milestone
   # (e.g. account_bound) can never outlive its session and masquerade as
@@ -259,6 +267,7 @@ case "${1:-}" in
   [ "$failed" -eq 0 ] || { echo "reset: a scope stop failed closed" >&2; exit 1; }
   ! escaped_writers || { echo "reset: escaped writer still holds the profile root" >&2; exit 1; }
   rm -rf "$root/wpe-data" "$root/wpe-cache" "$root/browser"
+  rm -f "$root/identity-cookies.sqlite" "$root/identity-cookies.sqlite-wal" "$root/identity-cookies.sqlite-shm" "$root/identity-cookies.sqlite-journal"
   rm -f "$root/generation"
   rm -f "$root/blocked"
   ;;

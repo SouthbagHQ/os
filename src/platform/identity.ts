@@ -27,6 +27,8 @@ export interface Session {
   /** Epoch ms after which this stops counting as a session. */
   expiresAt: number;
   scope: string;
+  /** Migration fence for private Browser session handoff on the device. */
+  deviceHandoffVersion?: number;
 }
 
 const SESSION_KEY = "southbag.session";
@@ -60,7 +62,8 @@ export function currentSession(): Session | null {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const session = JSON.parse(raw) as Session;
-    if (!session.customer?.sub || !session.expiresAt || session.expiresAt <= Date.now()) {
+    if (!session.customer?.sub || !session.expiresAt || session.expiresAt <= Date.now() ||
+        (onDevice && session.deviceHandoffVersion !== 1)) {
       localStorage.removeItem(SESSION_KEY);
       return null;
     }
@@ -73,7 +76,7 @@ export function currentSession(): Session | null {
 export function storeSession(session: Session): Promise<void> {
   if (signingOut) return Promise.reject(new Error("Device sign-out is in progress. Try signing in afterward."));
   const update = accountUpdate.catch(() => {}).then(async () => {
-    const serialized = JSON.stringify(session);
+    const serialized = JSON.stringify(onDevice ? { ...session, deviceHandoffVersion: 1 } : session);
     if (!onDevice) {
       localStorage.setItem(SESSION_KEY, serialized);
       return;
@@ -87,7 +90,7 @@ export function storeSession(session: Session): Promise<void> {
       headers: { "Content-Type": "application/json" },
       // expectedSubject is a consistency fence, never the binding authority.
       // The CGI independently verifies accessToken and writes only userinfo.
-      body: JSON.stringify({ accessToken: session.accessToken, generation, expectedSubject: session.customer.sub }),
+      body: JSON.stringify({ accessToken: session.accessToken, generation, expectedSubject: session.customer.sub, expiresAt: session.expiresAt }),
     });
     if (!response.ok) throw new Error("Account binding failed. Try signing in again.");
     try {

@@ -60,7 +60,7 @@ for unit in southbag-input-broker.service southbag-input-broker.socket southbag-
 done
 # swaylock config and its PAM entry ship with the lock feature (the image
 # keeps swaylock as the fallback client).
-for cfg in etc/swaylock/config etc/pam.d/swaylock; do
+for cfg in etc/swaylock/config etc/pam.d/swaylock usr/share/southbag-lock/prompt.png; do
   [[ -f "$repo/image/config/includes.chroot/$cfg" ]] && install -D -m 644 "$repo/image/config/includes.chroot/$cfg" "$root/$cfg"
 done
 chmod 755 "$root/usr/local/bin/"*

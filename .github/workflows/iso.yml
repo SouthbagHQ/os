@@ -89,11 +89,11 @@ jobs:
           mkdir -p out/kevin-input
           curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/espanso-candidate -o out/kevin-input/espanso-candidate
           curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/source.tar.gz -o out/kevin-input/source.tar.gz
-          curl --fail --location --retry 3 https://github.com/SouthbagHQ/os/releases/download/worker-input-kevin-ci1/southbag-inject_2.4.1%2Bsouthbag.2.kevin1.ci1_amd64.deb -o out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb
           echo 'c28046a7573efedc8806e8ea70c60be8df3c4ff52101aa6264f929b4fc046f1d  out/kevin-input/espanso-candidate' | sha256sum --check
           echo '9d00e6cd1b2917c63022664426c8f25e174644711882c1671894a60bb5e4d0d9  out/kevin-input/source.tar.gz' | sha256sum --check
-          echo 'e75fe8dba441f1543d618bd541e61eef660b788584f677a8189b74132b01cefe  out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb' | sha256sum --check
-          echo "SOUTHBAG_KEVIN_DEB=$GITHUB_WORKSPACE/out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci1_amd64.deb" >>"$GITHUB_ENV"
+          bash packaging/build-kevin-deb.sh out/kevin-input/espanso-candidate out/kevin-input/source.tar.gz out/kevin-input ci2
+          echo 'bdea3447ab3d0b69157cdf33d2ba8e014971973c114634a5ebf6803261071951  out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci2_amd64.deb' | sha256sum --check
+          echo "SOUTHBAG_KEVIN_DEB=$GITHUB_WORKSPACE/out/kevin-input/southbag-inject_2.4.1+southbag.2.kevin1.ci2_amd64.deb" >>"$GITHUB_ENV"
           echo "SOUTHBAG_KEVIN_SOURCE=$GITHUB_WORKSPACE/out/kevin-input/source.tar.gz" >>"$GITHUB_ENV"
 
       - name: Build the ISO
@@ -228,9 +228,9 @@ jobs:
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
           cat >>out/RELEASE.md <<'NOTES'
 
-          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.0 is included.
+          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.1 is included. The OS sign-in is handed to Browser without a second Browser login or consent round. The default lock now keeps its password prompt and indicator visible.
 
-          Qualification limits: QEMU only, not physical hardware certification. Graphical plain/password/native-lock correction and reset cleanup passed on the qualification ISO. Device-removal testing used a USB tablet and monitor sequence-gap shutdown, not physical keyboard read-EIO. Held Shift was sampled at startup, but no final-image held-modifier pixel claim is made. No signed-in Drive or new Electron-window proof is claimed. Native password tests used a restored local synthetic verifier.
+          Qualification limits: QEMU/TCG only, not physical hardware or KVM certification. Issue #23's reported KVM correction failure remains unconfirmed; terminal generation and reason diagnostics have been added. The worker binary and corresponding source are unchanged from v0.1.2; the ci2 package updates its launcher diagnostics. No signed-in Drive, physical keyboard read-EIO, held-modifier or camera claim is made.
           NOTES
 
       - name: Report size

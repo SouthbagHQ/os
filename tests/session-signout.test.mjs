@@ -41,7 +41,7 @@ test('login captures the era, the binding carries it, logout names it and never 
   await mod.logout();
   assert.deepEqual(requests, [
     'genfetch',                                       // era captured at login, once
-    { accessToken: 'test', generation: 'g1', expectedSubject: 'test' },        // binding write carries the era
+    { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt },        // binding write carries the era
     { clear: true, generation: 'g1' },                // clear names the same era
     { generation: 'g1' },                             // reset names the login-time era
   ]);
@@ -60,7 +60,7 @@ test('logout waits for pending binding and cleanup before forgetting session', a
   await flush();
   assert.equal(done, false); assert.equal(requests.length, 2); assert.equal(local.size, 0);
   release(); await out;
-  assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }, { generation: 'g1' }]);
+  assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt }, { clear: true, generation: 'g1' }, { generation: 'g1' }]);
   assert.equal(local.size, 0);
 });
 
@@ -87,7 +87,7 @@ test('reset refusal: binding already cleared, local session retained for retry (
   mod.storeSession(fixture);
   await assert.rejects(mod.logout(), /cleanup failed/);
   assert.deepEqual(requests, [
-    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }, { generation: 'g1' },
+    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt }, { clear: true, generation: 'g1' }, { generation: 'g1' },
   ]);
   assert.equal(local.size, 2); // session + era retained; binding already gone server-side
   const second = recorder(okAll);
@@ -110,7 +110,7 @@ test('re-login during logout is refused before any new generation or binding req
   await assert.rejects(mod.storeSession({ ...fixture, accessToken: 'tok2' }), /sign-out is in progress/);
   releaseClear(); await out;
   assert.deepEqual(requests, [
-    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' },
+    'genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt },
     { clear: true, generation: 'g1' }, { generation: 'g1' },
   ]);
   assert.equal(local.size, 0);
@@ -131,7 +131,7 @@ for (const status of [409, 502]) {
     const { mod, local } = await load(fetcher);
     await assert.rejects(mod.storeSession(fixture), /Account binding failed/);
     assert.equal(local.size, 0);
-    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }]);
+    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt }]);
   });
 }
 test('unavailable generation cannot store a session or call account', async () => {
@@ -151,7 +151,7 @@ for (const cleanupOK of [true, false]) {
     };
     await assert.rejects(mod.storeSession(fixture), cleanupOK ? /Sign-in was not saved/ : /recovery is needed/);
     assert.equal(local.size, 0);
-    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test' }, { clear: true, generation: 'g1' }]);
+    assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt }, { clear: true, generation: 'g1' }]);
   });
 }
 

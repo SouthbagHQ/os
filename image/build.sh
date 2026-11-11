@@ -34,7 +34,7 @@ trap 'rm -f "$here/config/includes.chroot/tmp/southbag-inject-candidate.deb" "$h
 # config/hooks/normal/0025-southbag-browser.hook.chroot). Must be a release
 # that contains app windows — v1.0.0 predates them. Empty keeps the image
 # cog-only.
-SOUTHBAG_BROWSER_VERSION="v1.1.0"
+SOUTHBAG_BROWSER_VERSION="v1.1.1"
 
 # The shell is ordinary files on disk, served over loopback at boot. This
 # directory is generated, so anything hand-written that belongs beside the
