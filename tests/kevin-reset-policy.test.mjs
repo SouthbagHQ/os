@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {fixtureRoot} from './root-fixture.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,chmodSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -16,7 +17,7 @@ test('all-fields reset blocks before account/profile wipe if input stop fails, n
   const env={...process.env,SOUTHBAG_STATE_DIR:state,SOUTHBAG_DEVICE_INPUT_CLIENT:client,CLIENT_LOG:log};
   for(const mode of ['fail','pass']) {
    writeFileSync(join(state,'account'),'fixture\n');writeFileSync(join(root,'generation'),'fixture-generation\n');mkdirSync(join(root,'browser'),{recursive:true});writeFileSync(join(root,'browser','cookie'),'private');
-   const r=spawnSync('unshare',['--user','--map-root-user','sh',script,'reset','fixture-generation'],{env:{...env,STOP_RESULT:mode==='fail'?'1':'0',SOUTHBAG_DEVICE_SYSTEMCTL:'/bin/true'},encoding:'utf8',timeout:10000});
+   const r=fixtureRoot(policy,[script,'reset','fixture-generation'],{...env,STOP_RESULT:mode==='fail'?'1':'0',SOUTHBAG_DEVICE_SYSTEMCTL:'/bin/true'});
    assert.equal(r.status,mode==='fail'?1:0,r.stderr);
    assert.equal(existsSync(join(root,'browser','cookie')),mode==='fail');
    assert.equal(existsSync(join(state,'account')),mode==='fail');
