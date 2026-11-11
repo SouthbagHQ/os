@@ -64,7 +64,7 @@ if ! printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
  # shellcheck disable=SC2086
  resp=$($wgetbin -q -T 8 -O - \
   --header "Authorization: Bearer $token" \
-  "$origin/api/auth/oauth2/userinfo" 2>/dev/null) || {
+  "$origin/api/account/status" 2>/dev/null) || {
    # Failure milestone, era-bound like the writes below: a refusal from a
    # retired era must not clobber a live era's journey phase. The exchange
    # itself stays outside the lock (network latency must not hold a reset).
@@ -80,6 +80,10 @@ if ! printf '%s' "$body" | jq -e '.clear == true' >/dev/null 2>&1; then
    ) || true
    fail 502 "identity refused"
   }
+
+ # A successful HTTP exchange is not enough: only an explicit active status
+ # from the token owner's fresh Identity row can bind this device.
+ printf '%s' "$resp" | jq -e '.frozen == false' >/dev/null 2>&1 || fail 403 "account unavailable"
 
  # This caller field is NOT an identity assertion or authorization. It is
  # only the callback's consistency fence against its verified ID-token sub.
@@ -114,7 +118,7 @@ if printf '%s' "$body" | jq -e 'has("expiresAt")' >/dev/null 2>&1; then
 else
  rm -f "$root/browser-session.json"
 fi
-rm -f "$root/browser-handoff.json"
+rm -f "$root/browser-handoff.json" "$state/access-notice"
 ( umask 077; printf '%s\t%s\n' "$sub" "$email" > "$state/account" )
 "$navbin" account_bound || true
 /usr/local/bin/southbag-analytics account_bound >/dev/null 2>&1 || true

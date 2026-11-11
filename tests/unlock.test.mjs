@@ -79,13 +79,14 @@ before(async () => {
 
 after(() => { server.kill(); rmSync(runDir, { recursive: true, force: true }); });
 
-function unlockRaw(input) {
+function unlockRaw(input, statusBin = "/bin/true") {
   const r = spawnSync("sh", [HELPER], {
     input,
     env: {
       PATH: process.env.PATH,
       SOUTHBAG_IDENTITY_ORIGIN: origin,
       SOUTHBAG_WGET: "wget",
+      SOUTHBAG_ACCOUNT_STATUS_BIN: statusBin,
       SOUTHBAG_STATE_DIR: stateDir,
     },
   });
@@ -133,6 +134,7 @@ test("unreachable Identity stays locked (offline fails closed)", () => {
       PATH: process.env.PATH,
       SOUTHBAG_IDENTITY_ORIGIN: "http://127.0.0.1:1", // nothing listening
       SOUTHBAG_WGET: "wget",
+      SOUTHBAG_ACCOUNT_STATUS_BIN: "/bin/true",
       SOUTHBAG_STATE_DIR: stateDir,
     },
     timeout: 20000,
@@ -148,6 +150,7 @@ test("missing account note stays locked (nothing to verify against)", () => {
       PATH: process.env.PATH,
       SOUTHBAG_IDENTITY_ORIGIN: origin,
       SOUTHBAG_WGET: "wget",
+      SOUTHBAG_ACCOUNT_STATUS_BIN: "/bin/true",
       SOUTHBAG_STATE_DIR: join(empty, "southbag"),
     },
   });
@@ -167,6 +170,7 @@ test("no secrets in helper argv", () => {
       PATH: process.env.PATH,
       SOUTHBAG_IDENTITY_ORIGIN: origin,
       SOUTHBAG_WGET: join(binDir, "wget"),
+      SOUTHBAG_ACCOUNT_STATUS_BIN: "/bin/true",
       SOUTHBAG_STATE_DIR: stateDir,
     },
   });
@@ -231,7 +235,8 @@ test("empty, overlong, multiline and extra NUL tokens fail closed", () => {
 test("overflow sentinel stops the reader without waiting for unbounded EOF", async () => {
   const child = spawn("sh", [HELPER], {env: {
     PATH: process.env.PATH, SOUTHBAG_IDENTITY_ORIGIN: origin,
-    SOUTHBAG_WGET: "wget", SOUTHBAG_STATE_DIR: stateDir,
+    SOUTHBAG_WGET: "wget", SOUTHBAG_ACCOUNT_STATUS_BIN: "/bin/true",
+      SOUTHBAG_STATE_DIR: stateDir,
   }, stdio: ["pipe", "pipe", "pipe"]});
   child.stdin.on("error", () => {});
   const done = new Promise((resolve, reject) => {
@@ -241,4 +246,10 @@ test("overflow sentinel stops the reader without waiting for unbounded EOF", asy
   child.stdin.write("x".repeat(130)); // deliberately leave stdin open
   assert.equal(await done, 1);
   child.stdin.destroy();
+});
+
+test('valid password or TOTP cannot unlock a frozen/unverifiable account',()=>{
+ writeFileSync(join(stateDir,'locked'),'',{mode:0o600});
+ assert.equal(unlockRaw(PASSWORD+'\n','/bin/false'),1);assert.ok(existsSync(join(stateDir,'locked')));
+ assert.equal(unlock('needs-totp'),1);assert.equal(unlockRaw('123456\n','/bin/false'),1);assert.ok(existsSync(join(stateDir,'locked')));
 });

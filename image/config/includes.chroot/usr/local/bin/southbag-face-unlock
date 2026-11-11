@@ -48,7 +48,7 @@ if $wgetbin -q -S -T 10 -O "$resp" \
   "$origin/api/auth/sign-in/southbag-id" > /dev/null 2>"$hdrs" \
  && grep -q '^  HTTP/1\.[01] 200' "$hdrs"; then
  uid=$(jq -r '.user.id // empty' "$resp" 2>/dev/null)
- if [ -n "$uid" ] && [ "$uid" = "$sub" ]; then
+ if [ -n "$uid" ] && [ "$uid" = "$sub" ] && timeout 12 "${SOUTHBAG_ACCOUNT_STATUS_BIN:-/usr/local/bin/southbag-account-status}" "$state/device-session"; then
   rm -f "$state/locked"
   exit 0
  fi

@@ -155,6 +155,33 @@ escaped_writers() {
  return 1
 }
 
+# Every decision is made under session.lock. No cached active grant survives
+# a freeze, expiry, malformed reply or Identity outage. The status command is
+# called by the supervisor, never by a renderer that teardown is about to kill.
+statusbin=${SOUTHBAG_ACCOUNT_STATUS_BIN:-/usr/local/bin/southbag-account-status}
+seat_stop() { "${SOUTHBAG_DEVICE_SEAT_STOP:-/usr/bin/pkill}" -TERM -u "$(id -u)" -x labwc >/dev/null 2>&1 || true; }
+# With an unverifiable account, no old window may remain visible during slow
+# cleanup. swaylock -f returns only after the compositor accepted its lock.
+# If that barrier or teardown fails, end the seat rather than expose windows.
+trap 'if [ -e "$state/access-revoked" ]; then seat_stop; fi' EXIT
+case "${1:-}" in
+ check|shell)
+  if [ -f "$state/account" ]; then
+   if ! timeout 12 "$statusbin" "$root"; then
+    touch "$root/blocked" "$state/access-revoked" "$state/locked"
+    if ! timeout 12 "${SOUTHBAG_DEVICE_DENIAL_LOCK:-/usr/bin/swaylock}" -f; then
+     # Already locked, unavailable lock protocol, or a crashed lock client:
+     # retire the seat, but still try cleanup rather than strand the era.
+     seat_stop
+    fi
+    [ -f "$root/generation" ] || exit 1
+    printf '%s\n' 'Account access could not be verified. The session was closed. A frozen account must be recovered at Identity before signing in again.' > "$state/access-notice"
+    set -- reset "$(cat "$root/generation")"
+   elif [ "$1" = check ]; then exit 0; fi
+  elif [ "$1" = check ]; then exit 0; fi
+  ;;
+esac
+
 case "${1:-}" in
  shell)
   [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] || exit 1
@@ -172,6 +199,7 @@ case "${1:-}" in
   ;;
  launch)
   [ -f "$state/account" ] && [ ! -e "$root/blocked" ] && [ ! -e "$root/compositor-stale" ] && [ -f "$root/generation" ] || exit 1
+  timeout 12 "$statusbin" "$root" || exit 1
   name=$2; shift 2
   case "$name" in browser|files|banking|office|chat|code|branches|lore|terminal|kevin|settings) ;; *) exit 1 ;; esac
   # Prepare only for the actual Browser launch, under the same lock as reset.
@@ -270,6 +298,14 @@ case "${1:-}" in
   rm -f "$root/identity-cookies.sqlite" "$root/identity-cookies.sqlite-wal" "$root/identity-cookies.sqlite-shm" "$root/identity-cookies.sqlite-journal"
   rm -f "$root/generation"
   rm -f "$root/blocked"
+  if [ -e "$state/access-revoked" ]; then
+   # Only release the denial lock once every private writer and credential
+   # is gone. The supervisor will show the clean login, never the old desktop.
+   # SIGUSR1 sends ext-session-lock unlock_and_destroy; TERM would leave
+   # the compositor permanently locked with a black surface.
+   "${SOUTHBAG_DEVICE_LOCK_STOP:-/usr/bin/pkill}" -USR1 -u "$(id -u)" -x swaylock >/dev/null 2>&1 || true
+   rm -f "$state/access-revoked"
+  fi
   ;;
  *) exit 2 ;;
 esac

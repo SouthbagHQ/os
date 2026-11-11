@@ -1,4 +1,12 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  let accessClosed = $state(false);
+  onMount(() => {
+    if (import.meta.env.MODE !== "device") return;
+    void fetch("/cgi-bin/device-session?access-notice", { method: "POST" })
+      .then(async (r) => { if (r.ok) accessClosed = (await r.json()).revoked === true; })
+      .catch(() => {});
+  });
   let { error = null, onsignin }: { error?: string | null; onsignin: () => void } = $props();
 </script>
 
@@ -8,6 +16,9 @@
     <p class="note">
       Kevin is watching
     </p>
+    {#if accessClosed}
+      <p class="error" role="status">Account access could not be verified, so this session was closed. If your account is frozen, recover it at Southbag Identity on another device, then sign in again.</p>
+    {/if}
     {#if error}
       <p class="error" role="alert">{error}</p>
     {/if}

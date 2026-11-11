@@ -36,9 +36,9 @@ async function startMock() {
   const code = `
 const { createServer } = require("node:http");
 const server = createServer((req, res) => {
-  if (req.url === "/api/auth/oauth2/userinfo" && req.headers.authorization === "Bearer ${TOKEN}") {
+  if (req.url === "/api/account/status" && req.headers.authorization === "Bearer ${TOKEN}") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ sub: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)} }));
+    res.end(JSON.stringify({ sub: ${JSON.stringify(SUB)}, email: ${JSON.stringify(EMAIL)}, frozen: false }));
     return;
   }
   res.writeHead(401, { "Content-Type": "application/json" });
@@ -159,7 +159,8 @@ test("manager reset clears nav-state with the account note", () => {
   const env = {
     ...process.env,
     SOUTHBAG_STATE_DIR: st,
-    SOUTHBAG_DEVICE_SYSTEMD_RUN: join(FIXBIN, "systemd-run"),
+    SOUTHBAG_ACCOUNT_STATUS_BIN:"/bin/true",
+   SOUTHBAG_DEVICE_SYSTEMD_RUN: join(FIXBIN, "systemd-run"),
     SOUTHBAG_DEVICE_SYSTEMCTL: join(FIXBIN, "systemctl"),
     SOUTHBAG_DEVICE_CGROUP_ROOT: join(b, "cgroup"),
     SOUTHBAG_DEVICE_START_DEADLINE: "3",
@@ -186,7 +187,8 @@ test("manager new era clears a stale nav-state before shell start", () => {
   const env = {
     ...process.env,
     SOUTHBAG_STATE_DIR: st,
-    SOUTHBAG_DEVICE_SYSTEMD_RUN: join(FIXBIN, "systemd-run"),
+    SOUTHBAG_ACCOUNT_STATUS_BIN:"/bin/true",
+   SOUTHBAG_DEVICE_SYSTEMD_RUN: join(FIXBIN, "systemd-run"),
     SOUTHBAG_DEVICE_SYSTEMCTL: join(FIXBIN, "systemctl"),
     SOUTHBAG_DEVICE_CGROUP_ROOT: join(b, "cgroup"),
     SOUTHBAG_DEVICE_START_DEADLINE: "3",

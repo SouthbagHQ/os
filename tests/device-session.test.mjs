@@ -34,7 +34,8 @@ function setup(){
  const shim=shimBin(base);
  const env={...process.env,
   SOUTHBAG_STATE_DIR:state,
-  SOUTHBAG_DEVICE_SYSTEMD_RUN:join(shim,'systemd-run'),
+  SOUTHBAG_ACCOUNT_STATUS_BIN:"/bin/true",
+   SOUTHBAG_DEVICE_SYSTEMD_RUN:join(shim,'systemd-run'),
   SOUTHBAG_DEVICE_SYSTEMCTL:join(shim,'systemctl'),
   SOUTHBAG_DEVICE_CGROUP_ROOT:join(base,'cgroup'),
   SOUTHBAG_DEVICE_START_DEADLINE:'3',
@@ -205,6 +206,7 @@ test('HOME alignment: without SOUTHBAG_STATE_DIR the manager state lives under $
  const shim=shimBin(base);
   const env={...process.env,
    HOME:home,
+   SOUTHBAG_ACCOUNT_STATUS_BIN:"/bin/true",
    SOUTHBAG_DEVICE_SYSTEMD_RUN:join(shim,'systemd-run'),
    SOUTHBAG_DEVICE_SYSTEMCTL:join(shim,'systemctl'),
    SOUTHBAG_DEVICE_CGROUP_ROOT:join(base,'cgroup'),
@@ -425,4 +427,58 @@ test('quiesce respects a prior blocked reset and refuses escaped profile writers
   assert.equal(existsSync(join(root,'blocked')),true);
   assert.notEqual(call('shell').status,0);
  }finally{if(fd!==undefined)closeSync(fd);rmSync(base,{recursive:true,force:true})}
+});
+
+// Freeze enforcement tests use only synthetic status and seat/lock adapters.
+// Existing lifecycle cases above explicitly inject /bin/true for status.
+test('fresh denial closes all tracked apps and private state, never relaunches old shell',()=>{
+ const {base,state,root,env,call}=setup();
+ try{
+  seedAccount(root,state);mkdirSync(join(root,'browser'));writeFileSync(join(root,'browser','cookie'),'synthetic');
+  writeFileSync(join(root,'browser-session.json'),'synthetic');writeFileSync(join(root,'identity-cookies.sqlite'),'synthetic');
+  assert.equal(call('launch','settings','sleep','30').status,0);
+  env.SOUTHBAG_ACCOUNT_STATUS_BIN='/bin/false';
+  env.SOUTHBAG_DEVICE_DENIAL_LOCK='/bin/true';env.SOUTHBAG_DEVICE_LOCK_STOP='/bin/true';env.SOUTHBAG_DEVICE_SEAT_STOP='/bin/true';
+  assert.notEqual(call('launch','settings','sleep','30').status,0,'new app blocked immediately');
+  assert.equal(call('check').status,0,'guard performed verified reset');
+  assert.equal(existsSync(join(state,'account')),false);assert.equal(existsSync(join(root,'generation')),false);
+  for(const name of ['browser','browser-session.json','identity-cookies.sqlite','blocked'])assert.equal(existsSync(join(root,name)),false,name);
+  assert.ok(existsSync(join(state,'access-notice')));assert.equal(existsSync(join(state,'access-revoked')),false);
+  assert.notEqual(call('launch','settings','sleep','30').status,0,'no launch after reset');
+ }finally{rmSync(base,{recursive:true,force:true})}
+});
+test('failed denial-lock ends the seat; failed teardown retains a blocked era',()=>{
+ for(const lockFailure of [true,false]){
+  const {base,state,root,env,call}=setup();
+  try{
+   seedAccount(root,state);assert.equal(call('launch','settings','sleep','30').status,0);
+   const stop=join(base,'stop-seat');writeFileSync(stop,'#!/bin/sh\ntouch "'+join(base,'seat-ended')+'"\n',{mode:0o755});
+   env.SOUTHBAG_ACCOUNT_STATUS_BIN='/bin/false';env.SOUTHBAG_DEVICE_DENIAL_LOCK=lockFailure?'/bin/false':'/bin/true';env.SOUTHBAG_DEVICE_SEAT_STOP=stop;
+   if(!lockFailure)writeFileSync(join(base,'systemd','stop-leaves-populated'),'');
+   const result=call('check');assert.ok(existsSync(join(base,'seat-ended')),'never leaves an old desktop visible');
+   if(lockFailure){assert.equal(result.status,0);assert.equal(existsSync(join(state,'account')),false);}
+   else {assert.notEqual(result.status,0);assert.ok(existsSync(join(root,'blocked')));assert.ok(existsSync(join(state,'access-revoked')));}
+   assert.notEqual(call('launch','settings','sleep','30').status,0);
+  }finally{rmSync(base,{recursive:true,force:true})}
+ }
+});
+test('the live supervisor checks the account while its shell is still running',()=>{
+ const source=readFileSync(join(here,'..','image/config/includes.chroot/usr/local/bin/southbag-shell'),'utf8');
+ assert.match(source,/while systemctl --user is-active --quiet "\$unit"; do[\s\S]*southbag-device-session check/);
+ assert.match(source,/next_check=\$\(\( \$\(date \+%s\) \+ 15 \)\)/);
+});
+
+test('denial lock is released with the compositor unlock protocol only after verified cleanup',()=>{
+ const {base,state,root,env,call}=setup();
+ try{
+  seedAccount(root,state);mkdirSync(join(root,'browser'));writeFileSync(join(root,'browser','cookie'),'private');
+  const unlock=join(base,'unlock-surface');
+  writeFileSync(unlock,'#!/bin/sh\nset -eu\n[ ! -e "'+join(state,'account')+'" ]\n[ ! -e "'+join(root,'browser')+'" ]\n[ ! -e "'+join(root,'generation')+'" ]\nprintf "%s\\n" "$@" > "'+join(base,'unlock-args')+'"\n',{mode:0o755});
+  env.SOUTHBAG_ACCOUNT_STATUS_BIN='/bin/false';env.SOUTHBAG_DEVICE_DENIAL_LOCK='/bin/true';
+  env.SOUTHBAG_DEVICE_LOCK_STOP=unlock;env.SOUTHBAG_DEVICE_SEAT_STOP='/bin/true';
+  assert.equal(call('check').status,0);
+  const args=readFileSync(join(base,'unlock-args'),'utf8').trim().split('\n');
+  assert.equal(args[0],'-USR1');assert.equal(args.at(-1),'swaylock');
+  assert.equal(existsSync(join(state,'access-revoked')),false);
+ }finally{rmSync(base,{recursive:true,force:true})}
 });

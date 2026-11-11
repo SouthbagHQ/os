@@ -17,7 +17,8 @@ trap 'exit 1' HUP INT TERM
 # If the previous session or boot ended while locked (compositor crash;
 # SAK is disabled image-wide), come back locked - never back to an exposed
 # desktop. The lock surface goes up before the shell does.
-if [ -e "${HOME:-/home/customer}/.local/share/southbag/locked" ]; then
+if [ -e "${HOME:-/home/customer}/.local/share/southbag/locked" ] &&
+   [ ! -e "${HOME:-/home/customer}/.local/share/southbag/access-revoked" ]; then
  /usr/local/bin/southbag-lock &
 fi
 
@@ -28,6 +29,7 @@ fi
 # Recovery is user-triggered from that page (the manager re-runs the same
 # bounded reset); there is no automatic unblock without verified cleanup.
 root="$HOME/.local/share/southbag/device-session"
+next_check=0
 while :; do
  kill -0 "$httpd" 2>/dev/null || exit 1
  if [ -e "$root/blocked" ]; then
@@ -46,7 +48,14 @@ while :; do
  /usr/local/bin/southbag-device-session shell || { sleep 1; continue; }
  if [ -f "$root/shell.unit" ]; then
   unit=$(cat "$root/shell.unit")
-  while systemctl --user is-active --quiet "$unit"; do sleep .2; done
+  while systemctl --user is-active --quiet "$unit"; do
+   now=$(date +%s)
+   if [ "$now" -ge "$next_check" ]; then
+    /usr/local/bin/southbag-device-session check || exit 1
+    next_check=$(( $(date +%s) + 15 ))
+   fi
+   sleep .2
+  done
  fi
  sleep .2
 done

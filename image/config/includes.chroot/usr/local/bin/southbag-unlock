@@ -75,7 +75,7 @@ post() {
 answered_for_us() {
  grep -q '^  HTTP/1\.[01] 200' "$hdrs" || return 1
  uid=$(jq -r '.user.id // empty' "$resp" 2>/dev/null) || return 1
- [ -n "$uid" ] && [ "$uid" = "$sub" ]
+ [ -n "$uid" ] && [ "$uid" = "$sub" ] && timeout 12 "${SOUTHBAG_ACCOUNT_STATUS_BIN:-/usr/local/bin/southbag-account-status}" "$state/device-session"
 }
 
 # save_challenge_cookie: keep the pending two-factor cookie pair(s), 0600 in

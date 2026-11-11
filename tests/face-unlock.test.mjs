@@ -70,7 +70,8 @@ after(() => { server.kill(); rmSync(runDir, { recursive: true, force: true }); }
 
 function faceUnlock(args, envExtra = {}) {
   const r = spawnSync("sh", [HELPER, ...args], {
-    env: { PATH: process.env.PATH, HOME: runDir, SOUTHBAG_IDENTITY_ORIGIN: origin, SOUTHBAG_STATE_DIR: stateDir, ...envExtra },
+    env: { PATH: process.env.PATH, HOME: runDir, SOUTHBAG_IDENTITY_ORIGIN: origin, SOUTHBAG_ACCOUNT_STATUS_BIN: "/bin/true",
+      SOUTHBAG_STATE_DIR: stateDir, ...envExtra },
   });
   return r;
 }
@@ -121,4 +122,12 @@ test("face mismatch from Identity stays locked", () => {
   const r = faceUnlock([photo]);
   assert.notEqual(r.status, 0);
   writeFileSync(join(stateDir, "faceid"), `${FACEID}\n`);
+});
+
+test('a matching face cannot unlock a frozen/unverifiable account',()=>{
+ writeFileSync(join(stateDir,'faceid'),FACEID);writeFileSync(join(stateDir,'locked'),'');
+ // Helper removes the synthetic photo on every attempt.
+ writeFileSync(photo,Buffer.alloc(100,1));
+ assert.notEqual(faceUnlock([photo],{SOUTHBAG_ACCOUNT_STATUS_BIN:'/bin/false'}).status,0);
+ assert.ok(existsSync(join(stateDir,'locked')));
 });

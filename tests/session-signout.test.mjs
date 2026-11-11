@@ -129,7 +129,7 @@ for (const status of [409, 502]) {
   test(`binding refusal ${status} cannot leave a newly stored session or era`, async () => {
     const { requests, fetcher } = recorder(() => ({ ok: false, status }));
     const { mod, local } = await load(fetcher);
-    await assert.rejects(mod.storeSession(fixture), /Account binding failed/);
+    await assert.rejects(mod.storeSession(fixture), /Account access could not be verified/);
     assert.equal(local.size, 0);
     assert.deepEqual(requests, ['genfetch', { accessToken: 'test', generation: 'g1', expectedSubject: 'test', expiresAt: fixture.expiresAt }]);
   });

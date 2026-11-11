@@ -92,7 +92,9 @@ export function storeSession(session: Session): Promise<void> {
       // The CGI independently verifies accessToken and writes only userinfo.
       body: JSON.stringify({ accessToken: session.accessToken, generation, expectedSubject: session.customer.sub, expiresAt: session.expiresAt }),
     });
-    if (!response.ok) throw new Error("Account binding failed. Try signing in again.");
+    if (!response.ok) throw new Error(response.status === 403
+      ? "Account access is unavailable. If your account is frozen, recover it at Southbag Identity before signing in again."
+      : "Account access could not be verified. Check your connection and try signing in again.");
     try {
       localStorage.setItem(GENERATION_KEY, generation);
       localStorage.setItem(SESSION_KEY, serialized);
