@@ -226,6 +226,12 @@ jobs:
           (cd out && sha256sum southbag-os.iso southbag-inject_*_source.tar.gz >SHA256SUMS)
           printf 'Southbag OS ISO\n\nSource commit: %s\nBuild: %s/%s/actions/runs/%s\n\nUEFI live ISO. This build passed structural verification and booted to the running-shell readiness marker under QEMU. This does not certify physical hardware, sound, camera or backlight support.\n' \
             "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >out/RELEASE.md
+          cat >>out/RELEASE.md <<'NOTES'
+
+          Kevin enforcement is enabled in all fields, including passwords: a lowercase kevin sequence becomes Kevin as typed. Enforcement pauses after sign-out or terminal input-device/monitor loss until reboot. Browser v1.1.0 is included.
+
+          Qualification limits: QEMU only, not physical hardware certification. Graphical plain/password/native-lock correction and reset cleanup passed on the qualification ISO. Device-removal testing used a USB tablet and monitor sequence-gap shutdown, not physical keyboard read-EIO. Held Shift was sampled at startup, but no final-image held-modifier pixel claim is made. No signed-in Drive or new Electron-window proof is claimed. Native password tests used a restored local synthetic verifier.
+          NOTES
 
       - name: Report size
         if: always()
