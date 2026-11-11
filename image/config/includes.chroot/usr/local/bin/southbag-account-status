@@ -43,7 +43,8 @@ def check(root):
     # Test-only origin adapter. Production never sets it.
     origin = os.environ.get('SOUTHBAG_IDENTITY_ORIGIN', 'https://identity.southbag.cc')
     req = urllib.request.Request(origin + '/api/account/status', headers={
-        'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Cache-Control': 'no-cache'})
+        'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'Cache-Control': 'no-cache',
+        'User-Agent': 'SouthbagOS/1.0 account-status'})
     with urllib.request.build_opener(NoRedirect).open(req, timeout=8) as response:
         if response.status != 200:
             raise ValueError('status refused')

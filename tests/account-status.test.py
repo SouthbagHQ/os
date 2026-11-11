@@ -15,8 +15,10 @@ class Handler(BaseHTTPRequestHandler):
     data = {'sub':'owner','frozen':False}
     code = 200
     seen = []
+    agents = []
     def do_GET(self):
         self.seen.append((self.path,self.headers.get('Authorization')))
+        self.agents.append(self.headers.get('User-Agent'))
         self.send_response(self.code)
         if self.code == 302:self.send_header('Location','http://127.0.0.1:1/stolen')
         self.end_headers()
@@ -34,7 +36,7 @@ class Check(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.state=Path(self.temp.name);self.root=self.state/'device-session';self.root.mkdir(mode=0o700)
         self.session={'subject':'owner','generation':'one','accessToken':'qualification.token-only-12345','expiresAt':int((time.time()+300)*1000)}
         self.put(self.root/'generation','one');self.put(self.state/'account','owner\temail\n');self.save()
-        Handler.data={'sub':'owner','frozen':False};Handler.code=200;Handler.seen=[]
+        Handler.data={'sub':'owner','frozen':False};Handler.code=200;Handler.seen=[];Handler.agents=[]
     def tearDown(self):self.temp.cleanup()
     def put(self,p,s):p.write_text(s);p.chmod(0o600)
     def save(self):self.put(self.root/'browser-session.json',json.dumps(self.session))
@@ -43,6 +45,7 @@ class Check(unittest.TestCase):
         with self.assertRaises(Exception):helper.check(self.root)
         Handler.data['frozen']=False;helper.check(self.root)
         self.assertEqual(Handler.seen,[('/api/account/status','Bearer qualification.token-only-12345')]*3)
+        self.assertEqual(Handler.agents,['SouthbagOS/1.0 account-status']*3)
     def test_response_fail_closed(self):
         for data in [{},{'sub':'other','frozen':False},{'sub':'owner','frozen':0},{'sub':'owner','frozen':'false'},{'sub':'owner','frozen':None}]:
             Handler.data=data
