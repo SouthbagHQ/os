@@ -1,4 +1,5 @@
 import {test} from 'node:test';
+import {fixtureRoot} from './root-fixture.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,mkdtempSync,mkdirSync,chmodSync,symlinkSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -14,7 +15,7 @@ test('all-fields root policy presents lock without credential-only inhibition; u
   writeFileSync(surface,'#!/bin/sh\necho invoked >> "$SURFACE_LOG"\n');chmodSync(surface,0o755);
   const env={...process.env,SOUTHBAG_STATE_DIR:state,SOUTHBAG_LOCK_BROKER:join(dir,'missing-broker'),SOUTHBAG_LOCK_SURFACE:surface,SURFACE_LOG:log};
   // User namespace maps this fixture's owner to root, without host root access.
-  const call=()=>spawnSync('unshare',['--user','--map-root-user','sh',script],{env,encoding:'utf8',timeout:10000});
+  const call=()=>fixtureRoot(policy,[script],env);
   writeFileSync(policy,'kevin=all-fields\n');chmodSync(policy,0o644);
   let r=call();assert.equal(r.status,0,r.stderr);assert.ok(existsSync(log));
   for(const kind of ['missing','writable','symlink','wrong-content']) {
