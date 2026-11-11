@@ -8,7 +8,7 @@ describe("locked settings", () => {
     expect(appById("settings")?.mount).toBe(mountSettings);
   });
   test("policy states are explicit and distinct", () => {
-    expect(SETTINGS.map(s => s.id)).toEqual(["analytics", "account", "updates", "kevin", "downloads"]);
+    expect(SETTINGS.map(s => s.id)).toEqual(["analytics", "updates", "kevin", "downloads"]);
     expect(SETTINGS.find(s => s.id === "analytics")?.enabled).toBe(true);
     expect(SETTINGS.find(s => s.id === "downloads")?.enabled).toBe(false);
     expect(new Set(SETTINGS.map(s => s.id)).size).toBe(SETTINGS.length);
@@ -19,6 +19,8 @@ describe("locked settings", () => {
     expect(source).toContain("input.disabled = true");
     expect(source).toContain('input.setAttribute("role", "switch")');
     expect(source).toContain('input.setAttribute("aria-describedby", note.id)');
+    expect(source).not.toContain("Southbag account required");
+    expect(source).not.toContain("SYSTEM POLICY");
     expect(source).not.toMatch(/localStorage|fetch\(|addEventListener|onchange|onclick/);
   });
 });

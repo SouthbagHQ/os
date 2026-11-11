@@ -1,6 +1,5 @@
 export const SETTINGS = [
   { id: "analytics", name: "Analytics", enabled: true, note: "Usage analytics are enabled. This setting cannot be changed here." },
-  { id: "account", name: "Southbag account required", enabled: true, note: "The desktop requires a signed-in Southbag account." },
   { id: "updates", name: "Automatic updates", enabled: true, note: "The device checks for system and Southbag updates daily." },
   { id: "kevin", name: "Kevin correction", enabled: true, note: "Configured on, including password fields. Correction pauses after sign-out or terminal input loss until reboot." },
   { id: "downloads", name: "Local Browser downloads", enabled: false, note: "OS-managed Browser downloads go through Drive instead of being saved locally." },
@@ -26,7 +25,6 @@ export function mountSettings(root: HTMLElement): () => void {
     .sb-settings input::after { content: ''; position: absolute; width: 12px; height: 12px; top: 3px; left: 3px; border-radius: 50%; background: var(--sb-text-dim); }
     .sb-settings input:checked { background: var(--sb-accent-bg); border-color: var(--sb-accent-border); }
     .sb-settings input:checked::after { left: 17px; background: var(--sb-text); }
-    .sb-settings .footer { border-top: 1px solid var(--sb-border); padding-top: 18px; font: 11px var(--font-mono); color: var(--sb-text-dim); }
     @media(max-width: 440px) { .sb-settings { padding: 20px 18px; } .sb-settings .setting { gap: 12px; } }
   `;
   const heading = document.createElement("h1");
@@ -66,10 +64,6 @@ export function mountSettings(root: HTMLElement): () => void {
     row.append(copy, control);
     page.append(row);
   }
-  const footer = document.createElement("p");
-  footer.className = "footer";
-  footer.textContent = "SYSTEM POLICY / READ ONLY";
-  page.append(footer);
   root.append(page);
   return () => page.remove();
 }
