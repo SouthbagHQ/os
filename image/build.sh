@@ -34,10 +34,9 @@ cp -R "$here/shell-extra/." "$served/"
 # every web flow that can land these files.
 chmod +x "$served/cgi-bin/launch" "$served/cgi-bin/identity-auth"
 
-# live-build executes hooks straight from this tree, so the browser hook's
-# executable bit matters here too — set it, don't trust the checkout.
-hook="$here/config/hooks/normal/0025-southbag-browser.hook.chroot"
-[[ -f "$hook" ]] && chmod +x "$hook"
+# live-build executes hooks straight from this tree, so the hooks'
+# executable bits matter here too — set them, don't trust the checkout.
+chmod +x "$here"/config/hooks/normal/*.hook.chroot
 
 # Hand the browser pin to the chroot hook (or remove a stale one).
 pin="$here/config/includes.chroot/etc/default/southbag-browser"
@@ -54,6 +53,9 @@ docker run --rm --privileged \
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends live-build xorriso
 
+    # nopersistence: live-boot only persists when the boot line asks it to,
+    # and this refuses even that. The device has no local file storage on
+    # purpose, and a partition labeled "persistence" must not give it any.
     # UEFI only. grub-efi rather than systemd-boot: a hybrid live ISO is not
     # the A/B verity layout systemd-boot was chosen for, and grub-efi is what
     # live-build can actually produce here.
@@ -74,7 +76,7 @@ docker run --rm --privileged \
       --apt-recommends false \
       --apt-indices false \
       --firmware-chroot false \
-      --bootappend-live "boot=live live-config.hostname=southbag console=tty0 console=ttyS0,115200n8" \
+      --bootappend-live "boot=live live-config.hostname=southbag nopersistence console=tty0 console=ttyS0,115200n8" \
       --iso-application "Southbag OS" \
       --iso-publisher "Southbag" \
       --iso-volume "Southbag OS"
