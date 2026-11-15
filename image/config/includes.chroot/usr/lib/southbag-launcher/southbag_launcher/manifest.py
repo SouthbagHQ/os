@@ -287,16 +287,14 @@ def snapshot_topology(io):
     """
     rows = []
     for event_name in sysfsio.enumerate_event_names(io):
-        cpath = sysfsio.class_path(io, event_name)
-        realpath = io.realpath(cpath)
-        ok, _ = sysfsio.physical_evidence(io, realpath)
-        if not ok:
-            continue
-        try:
-            dev = io.read_text(realpath + "/dev")
-        except OSError:
-            raise Deny("topology snapshot read failed for %s" % event_name)
-        device_realpath = io.realpath(cpath + "/device")
-        name = sysfsio._read_optional(io, device_realpath + "/name")
-        rows.append((event_name, realpath, dev, name))
+        # Keyboards only, exactly as documented above: describe_event
+        # applies the same capability-proven filter as discovery, so a
+        # tablet/mouse/power-button (dis)appearing cannot trip the
+        # fail-closed recheck. Keyboard-capable devices with missing or
+        # ambiguous evidence still deny via describe_event.
+        desc = sysfsio.describe_event(io, event_name)
+        if desc is None:
+            continue  # virtual or capability-proven non-keyboard
+        rows.append((event_name, desc["sysfs_realpath"], desc["dev"],
+                     desc["name"]))
     return tuple(sorted(rows))

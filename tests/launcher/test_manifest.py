@@ -303,3 +303,23 @@ def test_snapshot_stable_and_detects_removal():
     assert m.snapshot_topology(io) == a
     io.remove_device("event3")
     assert m.snapshot_topology(io) != a
+
+
+def test_snapshot_denies_ambiguous_keyboard_capable():
+    # The keyboard filter must not silently EXCLUDE uncertainty: a
+    # keyboard-capable device with ambiguous physical evidence is a
+    # fail-closed Deny, same as in discovery.
+    io = FakeIO()
+    io.add_keyboard()
+    io.add_keyboard(event_name="event11", name="Mystery Keyboard",
+                    dev="13:71", bus_bound=False)
+    with pytest.raises(Deny, match="ambiguous"):
+        m.snapshot_topology(io)
+
+
+def test_snapshot_denies_capability_read_failure():
+    io = FakeIO()
+    io.add_keyboard()
+    io.fail_ioctl.add("event3")
+    with pytest.raises(Deny, match="capability read failed"):
+        m.snapshot_topology(io)

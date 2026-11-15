@@ -10,7 +10,7 @@ from southbag_launcher.errors import MonitorTerminal
 from southbag_launcher import manifest as m
 from southbag_launcher.monitor import TopologyMonitor, parse_uevent
 
-from fakes import FakeIO, FakeSocket, make_uevent
+from fakes import FakeIO, FakeSocket, make_uevent, nonkeyboard_bits
 
 APPROVED_REALPATH = ("/sys/devices/pci0000:00/0000:00:14.0/usb1/1-1/1-1:1.0"
                      "/0003:046d:c31c.0001/input/input_event3/event3")
@@ -296,6 +296,26 @@ def test_recheck_detects_snapshot_drift():
     io.remove_device("event3")
     with pytest.raises(MonitorTerminal, match="snapshot changed"):
         mon.recheck_snapshot()
+
+
+def test_nonkeyboard_physical_churn_does_not_change_baseline():
+    """snapshot_topology is documented as the frozen identity of every
+    present physical KEYBOARD. A capability-proven non-keyboard (USB
+    tablet, mouse, power button) is not a keystroke source: it cannot
+    shrink the approved set and is never granted to the worker, so its
+    arrival or removal must not trip the fail-closed recheck that stops
+    the Kevin worker (e.g. a KVM console tablet (dis)appearing)."""
+    io = FakeIO()
+    io.add_keyboard()  # event3: the approved physical keyboard
+    io.add_keyboard(event_name="event9", name="QEMU QEMU USB Tablet",
+                    dev="13:69", bits=nonkeyboard_bits())
+    mon, sock, _, _ = make_monitor(io=io)
+    mon.recheck_snapshot()  # stable: no raise
+    io.remove_device("event9")  # console tablet disappears
+    mon.recheck_snapshot()  # keyboard set unchanged: no raise
+    io.add_keyboard(event_name="event10", name="QEMU QEMU USB Tablet",
+                    dev="13:70", bits=nonkeyboard_bits())
+    mon.recheck_snapshot()  # tablet reappears: still no raise
 
 
 def test_parse_uevent_roundtrip():
